@@ -190,3 +190,12 @@ The checked-in snapshot at `config/gologin-profiles.json` records the current
 exact ID from the live `browser_profiles` response when opening a profile; use the
 registry as a readable reference and detect/report any live changes instead of
 falling back to a name when duplicate names exist.
+
+The checked-in `config/facebook-account-registry.json` records the supplied
+profile/account ID and name inventory in Profile 1-to-29 order. Each account's
+`password_ref` is a non-secret slot such as `password_2`; the corresponding
+password must be supplied at runtime and must never be copied into this file.
+Use the exact profile/account ID and its mapped password slot directly. Do not
+try other password slots, rotate credentials, or retry a known account with a
+different password. If the runtime secret for a mapped slot is unavailable,
+record `missing_password` and continue.
