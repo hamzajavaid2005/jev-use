@@ -125,6 +125,15 @@ def report(result: RunResult, act: bool, cache_note: str | None = None) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments and arguments[0] == "call":
+        # The Python console script predates the npm dispatcher. Keep the
+        # documented direct-tool subcommand available when that console script
+        # is the executable found on PATH.
+        from .tool_cli import main as tool_main
+
+        return tool_main(arguments[1:])
+
     parser = argparse.ArgumentParser(
         prog="jev-use",
         description="Drive one window toward a goal with Cua Driver + a typed chooser.",
@@ -172,7 +181,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--list-windows", action="store_true", help="print visible windows and exit")
     parser.add_argument("--list-tools", action="store_true", help="print driver tools and exit")
 
-    args = parser.parse_args(argv)
+    args = parser.parse_args(arguments)
 
     if args.list_tools:
         with Driver() as driver:

@@ -180,7 +180,18 @@ def run(serial: str, *, timeout: float, chunk_size: int,
                     or not isinstance(state.get("results"), list)
                     or not isinstance(state.get("next_index"), int)):
                 raise ValueError("resume state failed validation")
+            if continue_after_blocker:
+                readiness_started = time.monotonic()
+                try:
+                    ready = facebook_run(serial, action="ready", timeout=timeout)
+                except Exception as exc:
+                    ready = {"state": "device_error", "detail": str(exc)}
+                if ready.get("state") != "ready":
+                    return _session_blocked_response(state, token, ready,
+                                                     time.monotonic() - readiness_started)
             if retry_current:
+                if state.get("halted") == "device_or_session_blocker":
+                    raise ValueError("retry_current cannot retry an account blocked before selection; use continue_after_blocker after the phone is ready")
                 if not (state.get("halted") or state.get("in_flight") or state.get("retry_in_flight")):
                     raise ValueError("retry_current requires a halted or interrupted account")
                 retry_marker = state.get("retry_in_flight")
@@ -212,6 +223,7 @@ def run(serial: str, *, timeout: float, chunk_size: int,
             if not retry_current and state.get("halted") and continue_after_blocker:
                 state["halted"] = None
                 state["last_blocker"] = None
+                state["last_session_blocker"] = None
                 state["retry_in_flight"] = None
             if not retry_current and state.get("in_flight") and not continue_after_blocker:
                 # A process can die after sending a selection but before it
@@ -240,6 +252,7 @@ def run(serial: str, *, timeout: float, chunk_size: int,
         index = state["next_index"]
         processed = 0
         blocker: dict[str, Any] | None = None
+        session_blocker: dict[str, Any] | None = None
         if retry_target is not None:
             remaining = chunk_budget_seconds - (time.monotonic() - call_started)
             if remaining < timeout:
@@ -283,6 +296,7 @@ def run(serial: str, *, timeout: float, chunk_size: int,
                 state["retry_in_flight"] = None
                 state["halted"] = None
                 state["last_blocker"] = None
+                state["last_session_blocker"] = None
                 state["updated"] = time.time()
                 _write(token, state)
                 accounts, results, index = state["accounts"], state["results"], state["next_index"]
@@ -294,7 +308,7 @@ def run(serial: str, *, timeout: float, chunk_size: int,
                 _write(token, state)
                 blocker = record
 
-        while blocker is None and index < len(accounts) and processed < chunk_size:
+        while blocker is None and session_blocker is None and index < len(accounts) and processed < chunk_size:
             remaining = chunk_budget_seconds - (time.monotonic() - call_started)
             if remaining < 1:
                 break
@@ -308,8 +322,28 @@ def run(serial: str, *, timeout: float, chunk_size: int,
                 outcome = facebook_run(serial, action="location", account=name,
                                        timeout=min(float(timeout), remaining))
             except Exception as exc:
-                outcome = {"state": "workflow_error", "detail": str(exc)}
+                outcome = {"state": "workflow_error", "detail": str(exc),
+                           "account_attempted": None, "action_uncertain": True}
             elapsed = round(time.monotonic() - account_started, 3)
+            if outcome.get("action_uncertain") is True:
+                state["halted"] = "workflow_error_requires_inspection"
+                state["last_session_blocker"] = {
+                    "state": outcome.get("state", "workflow_error"),
+                    "detail": outcome.get("detail", "The workflow ended before its action stage was confirmed.")}
+                state["updated"] = time.time()
+                _write(token, state)
+                session_blocker = state["last_session_blocker"]
+                break
+            if outcome.get("account_attempted", True) is False:
+                state["in_flight"] = None
+                state["halted"] = "device_or_session_blocker"
+                state["last_session_blocker"] = {
+                    key: outcome[key] for key in ("state", "detail", "pending_account") if key in outcome
+                }
+                state["updated"] = time.time()
+                _write(token, state)
+                session_blocker = state["last_session_blocker"]
+                break
             record = _make_record(name, outcome, elapsed)
             # Persist every finished account outcome, but only a positively
             # identity-verified location is considered complete on resume.
@@ -327,17 +361,19 @@ def run(serial: str, *, timeout: float, chunk_size: int,
             _write(token, state)
             break
 
-        complete = (index >= len(accounts) and blocker is None
+        complete = (index >= len(accounts) and blocker is None and session_blocker is None
                     and len(results) == len(accounts)
                     and all(_verified(r)
                             for r in results))
-        state_name = "complete" if complete else ("blocked" if blocker else ("partial" if index >= len(accounts) else "in_progress"))
+        state_name = "complete" if complete else ("blocked" if blocker or session_blocker else ("partial" if index >= len(accounts) else "in_progress"))
         return {
             "device": serial, "state": state_name,
             "accounts": accounts, "results": results,
-            "next_index": index, "complete": complete,
-            "resume_token": None if complete or index >= len(accounts) and blocker is None else token,
+            **_remaining_fields(state),
+            "complete": complete,
+            "resume_token": None if complete or index >= len(accounts) and blocker is None and session_blocker is None else token,
             "blocker": blocker,
+            "session_blocker": session_blocker,
             "timings": {
                 "enumeration_seconds": round(float(state.get("enumeration_seconds", 0)), 3),
                 "chunk_seconds": round(time.monotonic() - call_started, 3),
@@ -378,14 +414,47 @@ def _blocked_response(state: dict[str, Any], token: str) -> dict[str, Any]:
     results = state.get("results", [])
     return {"device": state.get("device"), "state": "blocked",
             "accounts": accounts, "results": results,
-            "next_index": state.get("next_index", 0), "complete": False,
+            **_remaining_fields(state), "complete": False,
             "resume_token": token,
-            "blocker": state.get("last_blocker") or {
+            "blocker": (None if state.get("halted") in ("device_or_session_blocker", "workflow_error_requires_inspection")
+                        else state.get("last_blocker") or {
                         "state": state.get("halted", "interrupted_account_requires_inspection"),
                         "account": (state.get("in_flight") or {}).get("account"),
-                        "detail": "Audit stopped at an uncertain account. Inspect the phone, then resume with continue_after_blocker=true to skip it and continue."},
+                        "detail": "Audit stopped at an uncertain account. Inspect the phone, then resume with retry_current=true or continue_after_blocker=true."}),
+            "session_blocker": state.get("last_session_blocker"),
             "timings": {"enumeration_seconds": round(float(state.get("enumeration_seconds", 0)), 3),
                         "chunk_seconds": 0.0, "call_seconds": 0.0, "processed_this_call": 0,
                         "audit_wall_seconds": round(time.time() - float(state.get("created", time.time())), 3),
                         "completed_verified": sum(_verified(r) for r in results),
                         "total_accounts": len(accounts)}}
+
+
+def _session_blocked_response(state: dict[str, Any], token: str,
+                              observed: dict[str, Any], elapsed: float) -> dict[str, Any]:
+    """Return a read-only readiness failure without changing checkpoint state."""
+    blocker = {key: observed[key] for key in ("state", "detail", "pending_account") if key in observed}
+    return {"device": state.get("device"), "state": "blocked",
+            "accounts": state.get("accounts", []), "results": state.get("results", []),
+            **_remaining_fields(state), "complete": False,
+            "resume_token": token, "blocker": None, "session_blocker": blocker,
+            "timings": {"enumeration_seconds": round(float(state.get("enumeration_seconds", 0)), 3),
+                        "chunk_seconds": round(elapsed, 3), "call_seconds": round(elapsed, 3), "processed_this_call": 0,
+                        "audit_wall_seconds": round(time.time() - float(state.get("created", time.time())), 3),
+                        "completed_verified": sum(_verified(r) for r in state.get("results", [])),
+                        "total_accounts": len(state.get("accounts", []))}}
+
+
+def _remaining_fields(state: dict[str, Any]) -> dict[str, Any]:
+    accounts = state.get("accounts", [])
+    index = state.get("next_index", 0)
+    uncertain = None
+    marker = state.get("in_flight")
+    if marker:
+        uncertain = marker.get("account")
+        if marker.get("index") == index:
+            index += 1
+    retry_marker = state.get("retry_in_flight")
+    if retry_marker:
+        uncertain = retry_marker.get("account")
+    return {"next_index": state.get("next_index", 0),
+            "unattempted_accounts": accounts[index:], "uncertain_account": uncertain}

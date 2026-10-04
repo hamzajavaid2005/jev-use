@@ -7,10 +7,12 @@ from jev_use import facebook_audit, mcp_server
 
 
 def outcome(serial, *, action, account=None, timeout=30):
+    if action == "ready":
+        return {"state": "ready", "screen": "feed"}
     if action == "accounts":
         return {"state": "accounts", "accounts": ["Alpha", "Beta", "Gamma"], "seconds": 1.25}
     return {"state": "location", "account": account, "location": "Lahore",
-            "identity_verified": True, "seconds": 2.0}
+            "identity_verified": True, "account_attempted": True, "seconds": 2.0}
 
 
 def test_audit_persists_verified_results_and_resumes_from_next_account(tmp_path, monkeypatch):
@@ -58,6 +60,8 @@ def test_resume_token_is_bound_to_device(tmp_path, monkeypatch):
 def test_audit_stops_and_records_failed_identity_outcome(tmp_path, monkeypatch):
     monkeypatch.setattr(facebook_audit.host, "work_root", lambda: tmp_path)
     def fake(serial, *, action, account=None, timeout=30):
+        if action == "ready":
+            return {"state": "ready", "screen": "feed"}
         return {"state": "accounts", "accounts": ["Alpha", "Beta"]} if action == "accounts" else {
             "state": "identity_mismatch", "detail": "Unexpected active account"}
     result = facebook_audit.run("S", timeout=30, chunk_size=2, resume_token=None,
@@ -81,6 +85,8 @@ def test_retry_current_verifies_existing_account_without_reselection(tmp_path, m
     calls = []
     def fake(serial, *, action, account=None, timeout=30):
         calls.append((action, account))
+        if action == "ready":
+            return {"state": "ready", "screen": "feed"}
         if action == "accounts":
             return {"state": "accounts", "accounts": ["Alpha", "Beta"]}
         if action == "location" and account == "Alpha":
@@ -108,6 +114,8 @@ def test_retry_current_verifies_existing_account_without_reselection(tmp_path, m
 def test_retry_current_identity_mismatch_stays_blocked_and_never_selects(tmp_path, monkeypatch):
     monkeypatch.setattr(facebook_audit.host, "work_root", lambda: tmp_path)
     def fake(serial, *, action, account=None, timeout=30):
+        if action == "ready":
+            return {"state": "ready", "screen": "menu"}
         if action == "accounts":
             return {"state": "accounts", "accounts": ["Alpha"]}
         if action == "location":
@@ -173,6 +181,8 @@ def test_incompatible_audit_bounds_fail_before_device_discovery(monkeypatch, opt
 def test_location_claim_with_wrong_identity_is_suppressed(tmp_path, monkeypatch):
     monkeypatch.setattr(facebook_audit.host, "work_root", lambda: tmp_path)
     def fake(serial, *, action, account=None, timeout=30):
+        if action == "ready":
+            return {"state": "ready", "screen": "feed"}
         if action == "accounts":
             return {"state": "accounts", "accounts": ["Alpha"]}
         return {"state": "location", "account": "Beta", "location": "Lahore",
@@ -195,6 +205,8 @@ def test_interrupted_selection_is_not_replayed_and_requires_explicit_skip(tmp_pa
     calls = []
     def fake(serial, *, action, account=None, timeout=30):
         calls.append((action, account))
+        if action == "ready":
+            return {"state": "ready", "screen": "feed"}
         return {"state": "location", "account": account, "location": "Lahore", "identity_verified": True}
     blocked = facebook_audit.run("S", timeout=30, chunk_size=2, resume_token=token,
                                  facebook_run=fake)
@@ -202,7 +214,7 @@ def test_interrupted_selection_is_not_replayed_and_requires_explicit_skip(tmp_pa
     assert calls == []
     continued = facebook_audit.run("S", timeout=30, chunk_size=2, resume_token=token,
                                    facebook_run=fake, continue_after_blocker=True)
-    assert [call[1] for call in calls] == ["Beta"]
+    assert calls == [("ready", None), ("location", "Beta")]
     assert [record["state"] for record in continued["results"]] == ["interrupted_uncertain", "location"]
     assert continued["complete"] is False
 
@@ -223,6 +235,73 @@ def test_chunk_budget_does_not_start_an_account_without_its_full_timeout(tmp_pat
     assert location_calls == ["Alpha"]
     assert result["state"] == "in_progress"
     assert result["timings"]["processed_this_call"] == 1
+
+
+def test_preselection_session_blocker_does_not_consume_account_and_preflight_is_read_only(tmp_path, monkeypatch):
+    monkeypatch.setattr(facebook_audit.host, "work_root", lambda: tmp_path)
+    ready_states = [{"state": "pending_login", "pending_account": "Alpha",
+                     "detail": "Still logging in as Alpha"},
+                    {"state": "ready", "screen": "feed"}]
+    calls = []
+    def fake(serial, *, action, account=None, timeout=30):
+        calls.append((action, account))
+        if action == "accounts":
+            return {"state": "accounts", "accounts": ["Alpha", "Beta"]}
+        if action == "location":
+            return {"state": "pending_login", "detail": "Still logging in as Alpha",
+                    "account_attempted": False, "pending_account": "Alpha"}
+        if action == "ready":
+            return ready_states.pop(0)
+        pytest.fail(f"unexpected action: {action}")
+
+    first = facebook_audit.run("S", timeout=30, chunk_size=1, resume_token=None,
+                               facebook_run=fake)
+    assert first["state"] == "blocked"
+    assert first["results"] == []
+    assert first["next_index"] == 0
+    assert first["unattempted_accounts"] == ["Alpha", "Beta"]
+    assert first["session_blocker"]["pending_account"] == "Alpha"
+    path = facebook_audit._path(first["resume_token"])
+    before = path.read_text()
+
+    still_blocked = facebook_audit.run("S", timeout=30, chunk_size=1,
+                                       resume_token=first["resume_token"],
+                                       facebook_run=fake, continue_after_blocker=True)
+    assert still_blocked["session_blocker"]["pending_account"] == "Alpha"
+    assert path.read_text() == before
+    assert still_blocked["results"] == [] and still_blocked["next_index"] == 0
+
+    # A read-only readiness check now passes; Alpha is still the next account.
+    original = fake
+    def ready_then_succeed(serial, *, action, account=None, timeout=30):
+        if action == "ready":
+            return {"state": "ready", "screen": "feed"}
+        if action == "location":
+            return {"state": "location", "account": account, "location": "Lahore",
+                    "identity_verified": True, "account_attempted": True}
+        return original(serial, action=action, account=account, timeout=timeout)
+    resumed = facebook_audit.run("S", timeout=30, chunk_size=1,
+                                 resume_token=first["resume_token"],
+                                 facebook_run=ready_then_succeed,
+                                 continue_after_blocker=True)
+    assert resumed["results"][0]["account"] == "Alpha"
+    assert resumed["complete"] is False
+    assert resumed["unattempted_accounts"] == ["Beta"]
+
+
+def test_unexpected_workflow_exception_preserves_inflight_as_uncertain(tmp_path, monkeypatch):
+    monkeypatch.setattr(facebook_audit.host, "work_root", lambda: tmp_path)
+    def fail(serial, *, action, account=None, timeout=30):
+        if action == "accounts":
+            return {"state": "accounts", "accounts": ["Alpha"]}
+        raise RuntimeError("transport died during selection")
+    first = facebook_audit.run("S", timeout=30, chunk_size=1, resume_token=None,
+                               facebook_run=fail)
+    saved = json.loads(facebook_audit._path(first["resume_token"]).read_text())
+    assert first["results"] == []
+    assert first["next_index"] == 0
+    assert saved["in_flight"]["account"] == "Alpha"
+    assert first["session_blocker"]["state"] == "workflow_error"
 
 
 def test_audit_tool_routes_to_module_and_validates_chunk_before_device(monkeypatch):
@@ -256,3 +335,33 @@ def test_facebook_audit_schema_and_mobile_prompt_expose_resume_flow():
     assert "continue_after_blocker" in props
     assert "retry_current" in props
     assert "resume_token" in mcp_server.MOBILE_PROMPT_TEMPLATE
+    assert "unattempted_accounts" in mcp_server.MOBILE_PROMPT_TEMPLATE
+
+
+def test_mcp_audit_normalizes_canonical_string_arguments_before_device(monkeypatch):
+    monkeypatch.setattr(mcp_server, "android_device", lambda args: type("D", (), {"serial": "S"})())
+    token = "123e4567-e89b-42d3-a456-426614174000"
+    monkeypatch.setattr(mcp_server.facebook_audit, "validate_resume_token", lambda value: None)
+    seen = {}
+    def run(serial, **kwargs):
+        seen.update(serial=serial, **kwargs)
+        return {"state": "in_progress"}
+    monkeypatch.setattr(mcp_server.facebook_audit, "run", run)
+    mcp_server.tool_android_facebook({"action": "audit", "chunk_size": " 2 ",
+                                      "timeout": "50", "chunk_budget_seconds": "52",
+                                      "resume_token": token,
+                                      "continue_after_blocker": "True", "retry_current": "false"})
+    assert seen["chunk_size"] == 2 and type(seen["chunk_size"]) is int
+    assert seen["timeout"] == 50.0 and seen["chunk_budget_seconds"] == 52.0
+    assert seen["continue_after_blocker"] is True and seen["retry_current"] is False
+
+
+@pytest.mark.parametrize("args", [
+    {"chunk_size": "2.0"}, {"chunk_size": "True"}, {"chunk_size": True},
+    {"continue_after_blocker": "yes"}, {"retry_current": "1"},
+    {"timeout": "NaN"}, {"chunk_budget_seconds": "Infinity"},
+])
+def test_invalid_canonical_audit_strings_fail_before_device(monkeypatch, args):
+    monkeypatch.setattr(mcp_server, "android_device", lambda _: pytest.fail("must reject before adb"))
+    with pytest.raises(ValueError):
+        mcp_server.tool_android_facebook({"action": "audit", **args})

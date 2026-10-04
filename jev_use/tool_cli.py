@@ -6,10 +6,10 @@ import sys
 import tempfile
 from . import mcp_server
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("tool", choices=list(mcp_server.HANDLERS))
-    for name in ("profile", "url", "goal", "serial", "vendor", "action", "account", "label", "text", "code", "resume-token"):
+    for name in ("profile", "url", "goal", "serial", "vendor", "action", "account", "label", "text", "code", "resume-token", "run-id", "place", "audience"):
         parser.add_argument("--" + name)
     parser.add_argument("--port", type=int)
     parser.add_argument("--timeout", type=float)
@@ -19,9 +19,10 @@ def main() -> int:
     parser.add_argument("--act", action="store_true", default=None)
     parser.add_argument("--continue-after-blocker", action="store_true", default=None)
     parser.add_argument("--retry-current", action="store_true", default=None)
+    parser.add_argument("--publish", action="store_true", default=None)
     parser.add_argument("--headless", action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument("--json-file", help="Advanced arguments as JSON in a file; avoids shell quoting.")
-    options = vars(parser.parse_args())
+    options = vars(parser.parse_args(argv))
     tool = options.pop("tool")
     json_file = options.pop("json_file")
     arguments = {}

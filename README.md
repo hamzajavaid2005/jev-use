@@ -162,7 +162,7 @@ not send global keystrokes or click unrelated windows; warnings are returned if
 the helper cannot access the dialog.
 
 Reads default to 6,000 characters per page; `max_chars` can raise this to 20,000.
-The harness receives 13 tool schemas, loaded skill instructions, and tool results;
+The harness receives 15 tool schemas, loaded skill instructions, and tool results;
 it does not receive the project source. Actual context usage depends on the
 harness's tool discovery and tokenizer.
 
@@ -204,6 +204,12 @@ the user works on the PC, but shares the phone's visible screen with manual use.
 
 For Facebook account batches, use `android_facebook(action="audit")`. It
 enumerates saved accounts and processes them sequentially in bounded chunks.
+For an authorized login → primary-location read → Public location check-in →
+logout job, use `android_facebook_flow` with the exact account/place,
+`publish=true`, and a stable `run_id`. It follows observed controls without a
+decision model per tap and journals submission before posting. Reuse its
+`resume_token` to continue bounded calls; `complete=true` confirms both the post
+and logout. The check-in is separate from Facebook's inferred primary location.
 Continue with the returned resume token while `complete=false`; keep each call
 sequential. If a blocker stops the audit, inspect the phone and follow its
 detail. For an observed delayed login, pass the same token with
@@ -264,6 +270,17 @@ native MCP reuses a session and is faster for repeated calls. Search for missing
 tools once, use the fallback, and report persistent failures instead of repair
 loops. `doctor` checks configuration and installed paths; it does not prove the
 app connected its MCP session.
+
+If `jev-use` is not on PATH but this repository checkout is available, run the
+same fallback from the repository root with `.venv/bin/python -m jev_use call <tool> ...`
+using the checkout's environment, or the interpreter where jev-use is installed. The Python
+console script also accepts the `call` subcommand directly.
+
+Facebook audits can start from the saved-account sign-in screen: the workflow
+tries one uniquely observed saved card, verifies the resulting active identity,
+then enumerates the full in-app picker. A saved card alone never establishes a
+valid session. Password, verification, expired-session, and pending-login
+blockers remain explicit; an uncertain selection is never automatically replayed.
 
 ## Development
 

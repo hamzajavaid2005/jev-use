@@ -159,6 +159,61 @@ def test_facebook_mcp_routes_to_deterministic_workflow_without_chooser(monkeypat
     assert result['accounts'] == ['Name']
 
 
+@pytest.mark.parametrize("args", [
+    {}, {"account": " "}, {"account": "Shyam", "place": " "},
+    {"account": "Shyam", "audience": "Friends"},
+    {"account": "Shyam", "publish": "true"},
+    {"account": "Shyam", "publish": True},
+    {"account": "Shyam", "publish": True, "run_id": " "},
+    {"account": "Shyam", "timeout": True},
+    {"account": "Shyam", "timeout": 61},
+    {"account": "Shyam", "serial": " "},
+    {"account": "Shyam", "resume_token": "../bad"},
+])
+def test_facebook_flow_invalid_arguments_fail_before_device_or_state(monkeypatch, args):
+    monkeypatch.setattr(mcp_server, 'android_device',
+                        lambda args: pytest.fail('invalid args must fail before device discovery'))
+    monkeypatch.setattr(mcp_server.facebook_flow_state, 'load',
+                        lambda token: pytest.fail('invalid args must fail before checkpoint access'))
+    with pytest.raises(ValueError):
+        mcp_server.tool_android_facebook_flow(args)
+
+
+def test_facebook_flow_handler_checks_resume_binding_before_device(monkeypatch):
+    token = "123e4567-e89b-42d3-a456-426614174000"
+    monkeypatch.setattr(mcp_server.facebook_flow_state, 'load', lambda token: {
+        "serial": "S", "account": "Other", "place": "Manila, Philippines",
+        "audience": "Public"})
+    monkeypatch.setattr(mcp_server, 'android_device',
+                        lambda args: pytest.fail('binding mismatch must fail before device discovery'))
+    with pytest.raises(ValueError, match="different account"):
+        mcp_server.tool_android_facebook_flow({"account": "Shyam", "resume_token": token})
+
+
+def test_facebook_flow_handler_forwards_defaults_and_explicit_publish(monkeypatch):
+    monkeypatch.setattr(mcp_server, 'android_device', lambda args: SimpleNamespace(serial='S'))
+    calls = []
+    monkeypatch.setattr(mcp_server.facebook_flow, 'run',
+                        lambda serial, **kwargs: calls.append((serial, kwargs)) or {
+                            "state": "pre-submit", "stage": "pre-submit"})
+    result = json.loads(mcp_server.tool_android_facebook_flow({
+        "account": "Shyam Desai", "publish": True, "run_id": "job-123"}))
+    assert result["stage"] == "pre-submit"
+    assert calls == [("S", {"account": "Shyam Desai", "place": "Manila, Philippines",
+                             "audience": "Public", "resume_token": None,
+                             "timeout": 55.0, "publish": True,
+                             "run_id": "job-123"})]
+
+
+def test_facebook_flow_tool_is_registered_with_public_audience_schema():
+    assert "android_facebook_flow" in mcp_server.HANDLERS
+    schema = next(tool["inputSchema"] for tool in mcp_server.TOOLS
+                  if tool["name"] == "android_facebook_flow")
+    assert schema["properties"]["audience"]["enum"] == ["Public"]
+    assert schema["properties"]["publish"]["default"] is False
+    assert schema["required"] == ["account"]
+
+
 def test_mobile_prompt_prefers_verified_workflow_and_clear_blockers():
     prompt = mcp_server.MOBILE_PROMPT_TEMPLATE
     assert 'android_facebook' in prompt

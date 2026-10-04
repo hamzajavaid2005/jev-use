@@ -3,7 +3,7 @@ import html
 
 import pytest
 
-from jev_use import android, facebook_android as fb
+from jev_use import android, facebook_android as fb, facebook_audit
 
 
 def node(label="", *, cls="android.widget.Button", bounds=(20, 200, 1000, 290), clickable=True, **attrs):
@@ -73,6 +73,13 @@ class Phone:
             if self.labeled_menu:
                 nodes.append(node("Menu", bounds=(800, 1800, 1050, 1900)))
             return screen(nodes)
+        if self.state == "saved_landing":
+            nodes = [node("Settings", clickable=False), node("Facebook from Meta", clickable=False)]
+            nodes += [node(name + ",  9+ notifications", cls="android.view.ViewGroup",
+                           bounds=(20, 400 + i * 150, 1000, 500 + i * 150))
+                      for i, name in enumerate(self.names)]
+            nodes += [node("Use another profile"), node("Create new account")]
+            return screen(nodes)
         if self.state == "menu":
             return screen([node(self.current + ", see your profile", clickable=False),
                            node("Open profile switcher")])
@@ -113,6 +120,9 @@ class Phone:
             self.state = "menu"
         elif label == "Dismiss":
             self.state = "switcher" if self.ineffective_dismiss and self.state == "accounts" else "menu"
+        elif self.state == "saved_landing":
+            self.current = fb.account_name(label)
+            self.state = "logging"
         elif label == "Open profile switcher":
             self.state = "switcher"
         elif label.startswith("Other accounts"):
@@ -162,6 +172,7 @@ def test_switches_once_waits_for_login_and_verifies_location_identity(monkeypatc
     phone = Phone(monkeypatch)
     result = fb.run("S", action="location", account="Tahir Shah")
     assert result["state"] == "location"
+    assert result["account_attempted"] is True
     assert result["account"] == "Tahir Shah"
     assert result["location"] == "Lahore, Punjab 54"
     assert result["identity_verified"] is True
@@ -172,12 +183,45 @@ def test_switches_once_waits_for_login_and_verifies_location_identity(monkeypatc
     assert result["timings"]["location_open_and_poll"] >= 0
 
 
+def test_restart_recovers_frozen_login_without_reselecting_account(monkeypatch):
+    phone = Phone(monkeypatch)
+    phone.state = "logging"
+    phone.freeze_login = True
+    restarts = []
+
+    def restart(serial, **kwargs):
+        restarts.append(serial)
+        phone.state = "feed"
+        phone.freeze_login = False
+
+    monkeypatch.setattr(android, "restart_facebook", restart)
+    result = fb.run("S", action="restart", account="Afiza Parween", timeout=50)
+    assert restarts == ["S"]
+    assert result["state"] == "location"
+    assert result["identity_verified"] is True
+    assert result["recovery_attempts"] == 1
+    assert "Open profile switcher" not in phone.actions
+    assert phone.actions.count("location-read") == 1
+
+
+def test_restart_does_not_attribute_location_to_different_active_account(monkeypatch):
+    phone = Phone(monkeypatch)
+    phone.current = "Tahir Shah"
+    monkeypatch.setattr(android, "restart_facebook", lambda *args, **kwargs: None)
+    result = fb.run("S", action="restart", account="Afiza Parween", timeout=50)
+    assert result["state"] == "identity_mismatch"
+    assert "location" not in result
+    assert "location-read" not in phone.actions
+    assert "Open profile switcher" not in phone.actions
+
+
 def test_current_location_resumes_verified_active_account_without_selection(monkeypatch):
     phone = Phone(monkeypatch)
     result = fb.run("S", action="current_location", account="Afiza Parween", timeout=50)
     assert result["state"] == "location"
     assert result["account"] == "Afiza Parween"
     assert result["identity_verified"] is True
+    assert result["account_attempted"] is True
     assert "Open profile switcher" not in phone.actions
     assert not any(action.endswith("notifications") for action in phone.actions)
     assert phone.actions.count("location-read") == 1
@@ -188,6 +232,7 @@ def test_current_location_waits_for_matching_pending_login_without_reselection(m
     phone.state = "logging"
     result = fb.run("S", action="current_location", account="Afiza Parween", timeout=50)
     assert result["state"] == "location"
+    assert result["account_attempted"] is True
     assert phone.login_reads == 3
     assert phone.actions.count("location-read") == 1
     assert "Open profile switcher" not in phone.actions
@@ -200,6 +245,7 @@ def test_current_location_times_out_on_frozen_matching_login_without_taps(monkey
     phone.freeze_login = True
     result = fb.run("S", action="current_location", account="Afiza Parween", timeout=10)
     assert result["state"] == "timeout"
+    assert result["account_attempted"] is False
     assert phone.actions == []
 
 
@@ -220,6 +266,7 @@ def test_current_location_identity_mismatch_does_not_read_or_select(monkeypatch)
     assert "location-read" not in phone.actions
     assert "Open profile switcher" not in phone.actions
     assert not any(action.endswith("notifications") for action in phone.actions)
+    assert result["account_attempted"] is False
 
 
 def test_current_account_skips_switching_and_resumes_from_open_picker(monkeypatch):
@@ -227,6 +274,7 @@ def test_current_account_skips_switching_and_resumes_from_open_picker(monkeypatc
     phone.state = "accounts"
     result = fb.run("S", action="location", account="Afiza Parween")
     assert result["state"] == "location"
+    assert result["account_attempted"] is True
     assert phone.actions == ["Dismiss", "location-read", "back"]
 
 
@@ -380,6 +428,158 @@ def test_account_names_preserve_commas_and_strip_only_notification_suffixes():
 def test_identity_requires_menu_control_not_just_profile_like_post_text():
     observation = screen([node('Someone Else, see your profile', clickable=False)])
     assert fb.identity(observation) is None
+
+
+def test_account_name_strips_plus_notification_suffix():
+    assert fb.account_name("Facebook from Meta, 9+ notifications") == "Facebook from Meta"
+
+
+@pytest.mark.parametrize("ending", ["…", "..."])
+def test_menu_reports_observed_pending_login_immediately(monkeypatch, ending):
+    phone = Phone(monkeypatch)
+    phone.state = "Logging in as Tahir Shah" + ending
+    result = fb.run("S", action="ready")
+    assert result["state"] == "pending_login"
+    assert "Tahir Shah" in result["detail"]
+    assert result["pending_account"] == "Tahir Shah"
+    assert result["account_attempted"] is False
+    assert phone.actions == []
+
+
+def test_expired_session_is_distinguished_from_generic_login(monkeypatch):
+    phone = Phone(monkeypatch)
+    phone.state = "Session expired\nPlease log in again.\nOK"
+    result = fb.run("S", action="ready")
+    assert result["state"] == "session_expired"
+    assert result["account_attempted"] is False
+    assert phone.actions == []
+
+
+def test_location_action_returns_expired_session_immediately(monkeypatch):
+    phone = Phone(monkeypatch)
+    phone.state = "Session expired\nPlease log in again.\nOK"
+    result = fb.run("S", action="location", account="Tahir Shah")
+    assert result["state"] == "session_expired"
+    assert result["account_attempted"] is False
+    assert phone.actions == []
+
+
+def test_saved_account_login_landing_is_not_reported_ready(monkeypatch):
+    phone = Phone(monkeypatch)
+    phone.state = "saved_landing"
+    result = fb.run("S", action="ready")
+    assert result["state"] == "saved_accounts"
+    assert result["account_attempted"] is False
+    assert phone.actions == []
+
+
+def test_accounts_bootstraps_one_exact_saved_card_then_enumerates_picker(monkeypatch):
+    phone = Phone(monkeypatch)
+    phone.state = "saved_landing"
+    result = fb.run("S", action="accounts", timeout=50)
+    assert result["state"] == "accounts"
+    assert result["active_account"] == "Afiza Parween"
+    assert result["accounts"] == phone.names
+    assert result["bootstrap_attempted"] is True
+    assert result["bootstrap_account"] == "Afiza Parween"
+    assert result["account_attempted"] is False
+    assert phone.actions.count("Afiza Parween,  9+ notifications") == 1
+
+
+def test_location_from_saved_landing_selects_requested_card_once_and_verifies(monkeypatch):
+    phone = Phone(monkeypatch)
+    phone.state = "saved_landing"
+    result = fb.run("S", action="location", account="Tahir Shah", timeout=50)
+    assert result["state"] == "location"
+    assert result["account"] == "Tahir Shah"
+    assert result["identity_verified"] is True
+    assert result["account_attempted"] is True
+    assert result["bootstrap_account"] == "Tahir Shah"
+    assert phone.actions.count("Tahir Shah,  9+ notifications") == 1
+
+
+def test_saved_landing_duplicate_card_is_ambiguous_without_a_tap(monkeypatch):
+    phone = Phone(monkeypatch)
+    phone.state = "saved_landing"
+    phone.names.append("Afiza Parween")
+    result = fb.run("S", action="accounts", timeout=50)
+    assert result["state"] == "account_ambiguous"
+    assert result["bootstrap_attempted"] is False
+    assert phone.actions == []
+
+
+def test_saved_landing_auth_prompt_after_one_selection_stops_without_retry(monkeypatch):
+    phone = Phone(monkeypatch)
+    phone.state = "saved_landing"
+    original_snapshot = phone.snapshot
+
+    def snapshot(serial):
+        if phone.state == "logging":
+            phone.login_reads += 1
+            if phone.login_reads >= 2:
+                phone.state = "Enter password"
+        if phone.state == "Enter password":
+            return screen([node("Enter password", cls="android.widget.EditText", password="true")])
+        return original_snapshot(serial)
+
+    monkeypatch.setattr(android, "snapshot", snapshot)
+    result = fb.run("S", action="accounts", timeout=50)
+    assert result["state"] == "authentication_required"
+    assert result["bootstrap_attempted"] is True
+    assert result["bootstrap_account"] == "Afiza Parween"
+    assert "pending_account" not in result
+    assert phone.actions.count("Afiza Parween,  9+ notifications") == 1
+
+
+def test_saved_landing_frozen_spinner_times_out_without_replaying_card(monkeypatch):
+    phone = Phone(monkeypatch)
+    phone.state = "saved_landing"
+    phone.freeze_login = True
+    result = fb.run("S", action="accounts", timeout=3)
+    assert result["state"] == "timeout"
+    assert result["bootstrap_attempted"] is True
+    assert result["bootstrap_account"] == "Afiza Parween"
+    assert result["pending_account"] == "Afiza Parween"
+    assert phone.actions.count("Afiza Parween,  9+ notifications") == 1
+
+
+def test_audit_bootstraps_saved_landing_and_records_verified_current_account(tmp_path, monkeypatch):
+    monkeypatch.setattr(facebook_audit.host, "work_root", lambda: tmp_path)
+    phone = Phone(monkeypatch)
+    phone.state = "saved_landing"
+    outcomes = []
+
+    def run_and_capture(serial, **kwargs):
+        outcome = fb.run(serial, **kwargs)
+        outcomes.append(outcome)
+        return outcome
+
+    result = facebook_audit.run("S", timeout=30, chunk_size=1,
+                                chunk_budget_seconds=55, resume_token=None,
+                                facebook_run=run_and_capture)
+    assert result["state"] == "in_progress"
+    assert result["results"][0]["account"] == "Afiza Parween"
+    assert result["results"][0]["state"] == "location"
+    assert result["results"][0]["identity_verified"] is True
+    assert result.get("blocker") is None
+    location_outcome = next(outcome for outcome in outcomes if outcome["action"] == "location")
+    assert location_outcome["account_attempted"] is True
+    assert phone.actions.count("Afiza Parween,  9+ notifications") == 1
+
+
+def test_ready_is_read_only_for_recognized_feed_and_menu(monkeypatch):
+    phone = Phone(monkeypatch)
+    result = fb.run("S", action="ready")
+    assert result["state"] == "ready"
+    assert result["screen"] == "feed"
+    assert phone.actions == []
+
+    phone.state = "menu"
+    result = fb.run("S", action="ready")
+    assert result["state"] == "ready"
+    assert result["screen"] == "menu"
+    assert result["active_account"] == "Afiza Parween"
+    assert phone.actions == []
 
 
 def test_top_tab_bar_with_mixed_accessibility_labels_is_recognized():

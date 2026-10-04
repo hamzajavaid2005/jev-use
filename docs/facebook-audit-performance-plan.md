@@ -183,6 +183,48 @@ Additional live regressions fixed hidden feed navigation and partially labeled
 top six-tab bars. Facebook's prolonged login spinner remains an external
 blocker; no account selection is repeated to force progress.
 
+## Follow-up session and fixes (2026-10-04)
+
+Session `2e7492fd-8d51-4e6d-b0ed-0d3442c6617a` lasted 25 minutes
+20 seconds with 57 assistant turns. Facebook tool durations totaled about
+341 seconds; the remaining time cannot be assigned precisely to screen reads,
+model generation, or runtime overhead from the transcript alone. The updated
+audit schema was loaded, but string arguments were rejected, CLI fallback
+failed, and expired sessions and pending spinners triggered recovery overhead.
+
+Only Shyam Desai (Lahore, Punjab 54), Afiza Parween (Muridke, Punjab 39),
+and Gopal Gopal Katheriya (Lahore, Punjab 54) had verified location results.
+Expired dialogs were observed for Heer HS, Tahir Shah, Purnank Pawshe, and
+Aarti J Aarti J. The transcript did not establish a logged-out or expired
+status for Saidu Kanu, Sada Sada, or Gurmukh Garima Singh Singh. Their absence
+from a logged-out saved-card screen is insufficient evidence.
+
+The follow-up fixes accept canonical numeric/boolean strings at the MCP
+boundary while retaining strict validation in the audit module, restore
+the Python CLI's `call` fallback, detect expired sessions promptly, and
+distinguish saved sign-in cards from active sessions. Audit continuation
+checks readiness without taps; unattempted accounts remain unchecked when
+a session blocker occurs before selection. These changes need a new live
+benchmark to establish their effect on total duration.
+
+Validation: 527 Python tests passed, 2 skipped; all 90 JavaScript tests passed.
+The Python console-script fallback's help was exercised without touching the
+phone. Both installed mobile-use skills were synchronized. Restart the
+CommandCode MCP connection before the next live audit so it loads these fixes.
+
+The next CommandCode run exposed an overly strict startup rule: the workflow
+treated every saved-account landing as requiring a manual sign-in, although
+the user's audit request already authorizes trying an observed saved card.
+The startup path now attempts a single uniquely recognized card, verifies its
+active identity, then enumerates the full in-app picker. Location requests can
+select the exact observed requested card. Read-only readiness and recovery
+checks remain read-only; actual credentials, verification, expired sessions,
+and unresolved transitions still stop the flow. Saved cards continue to be
+reported as remembered accounts until sign-in and identity verification succeed.
+The audit also records the already-active account correctly without selecting
+it again. Validation after the startup change: 533 Python tests passed, 2 skipped;
+all 90 JavaScript tests passed. Both installed mobile-use skills were updated.
+
 ## Original session results
 
 | Account | Location shown | Verification in session |

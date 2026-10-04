@@ -18,6 +18,7 @@ every turn:
     android_read       return the screen's text
     android_location   the location Facebook attributes to the signed-in account
     android_facebook   deterministic saved-account location workflow
+    android_facebook_flow   checkpointed Facebook check-in and logout workflow
 
 Android needs no CDP equivalent (adb is the channel, and it is always there),
 and it needs no `extract`: the view
@@ -45,6 +46,7 @@ import base64
 import json
 import math
 import os
+import re
 import sys
 import threading
 import traceback
@@ -65,6 +67,8 @@ from .text_model import TextModel
 from . import android as android_engine
 from . import facebook_android
 from . import facebook_audit
+from . import facebook_flow
+from . import facebook_flow_state
 from . import gologin
 from . import harness
 from . import betterwright
@@ -328,10 +332,33 @@ enumerates observed names and processes them sequentially, persisting each
 finished outcome. On blocked, inspect the phone before choosing retry_current=true
 (checks the active account without selecting it) or continue_after_blocker=true
 (skips it). These options are exclusive; uncertain accounts are never selected
-twice. A partial final report retains failed account outcomes.
+twice. For an explicit preselection session_blocker, use unattempted_accounts:
+those names have not been processed. If uncertain_account is present, selection
+may have happened; do not call it unattempted. Report only returned results and
+never say the full list was scanned.
+Remembered account cards do not prove valid sessions. Missing cards on a
+logged-out saved-account screen do not prove those accounts are logged out.
+On the saved-account landing screen, audit/accounts can select one observed
+saved card once, verify the resulting session, then enumerate the full picker.
+Location can select the exact requested visible saved card. The account-check
+request authorizes those taps; do not ask the user to tap a card merely because
+Facebook starts on this screen. Ask for help if sign-in requests credentials
+or verification. Cards alone never prove live sessions.
+For session_expired/pending_login, resolve the session blocker
+before continuation; readiness checks preserve the checkpoint while blocked.
+A partial final report retains failed account outcomes.
 Quote location only when state=location and identity_verified=true.
 For one account use android_facebook(action="location", account="EXACT_RETURNED_NAME").
 Both paths handle account selection and identity verification without model-guessed taps.
+For a requested Facebook check-in followed by logout, use one
+android_facebook_flow call with the exact account and place. Set publish=true
+only when publishing is authorized; include a stable run_id for the first call
+and reuse it if that request times out before returning. The flow verifies the
+account, reports its primary location, prepares and verifies a Public post
+preview, then publishes once and verifies logout. Resume returned checkpoints
+with resume_token.
+Uncertain submitting/logging_out checkpoints require inspection and are never
+replayed automatically. The flow uses no decision model.
 For locked/network_error/login/authentication_required, report the required user
 action. For timeout/unsupported_ui/identity_mismatch, inspect once with
 android_read(include_screenshot=true); never repeat an uncertain account switch.
@@ -720,13 +747,13 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "android_facebook",
-        "description": "Deterministic Facebook account workflow; no decision model needed. Prefer action=audit in timeout-safe chunks and pass its resume_token until complete. It enumerates exact observed names, persists each verified result and processes accounts sequentially. Use accounts/location for a single manual read. Reads primary location; does not edit it or publish posts.",
+        "description": "Deterministic Facebook account workflow; no decision model needed. Prefer action=audit in timeout-safe chunks and pass its resume_token until complete. From the saved-account sign-in screen it can try one observed saved card and verify the active identity before enumerating. It enumerates exact observed names, persists each verified result and processes accounts sequentially. Use accounts/location for a single manual read. If Facebook is frozen on login or a blank page, use restart once with the exact requested account; it force-stops/relaunches while preserving app data, then verifies identity before reading location. Reads primary location; does not edit it or publish posts.",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "serial": {"type": "string", "description": "Device from android_devices."},
-                "action": {"type": "string", "enum": ["accounts", "location", "audit"]},
-                "account": {"type": "string", "description": "Exact observed account name; required for action=location."},
+                "action": {"type": "string", "enum": ["accounts", "location", "restart", "audit"]},
+                "account": {"type": "string", "description": "Exact observed account name; required for action=location or restart."},
                 "timeout": {"type": "number", "default": facebook_audit.DEFAULT_ACCOUNT_TIMEOUT, "minimum": 1, "maximum": 60,
                             "description": "Maximum total seconds for each account selection and location read."},
                 "chunk_size": {"type": "integer", "default": facebook_audit.DEFAULT_CHUNK_SIZE, "minimum": 1, "maximum": facebook_audit.MAX_CHUNK_SIZE,
@@ -740,6 +767,24 @@ TOOLS: list[dict[str, Any]] = [
                                   "description": "After inspecting the phone, recheck the already-active account without selecting it again. Requires resume_token and a blocked audit."},
             },
             "required": ["action"],
+        },
+    },
+    {
+        "name": "android_facebook_flow",
+        "description": "Run a deterministic, checkpointed Facebook flow for one exact account: verify identity, read primary location, prepare a Public check-in at the requested place, publish once only when publish=true, and verify logout. No decision model is used. Resume with the returned token; uncertain Publish or logout stages are never replayed.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "serial": {"type": "string", "description": "Device serial from android_devices."},
+                "account": {"type": "string", "description": "Exact Facebook account name to use."},
+                "place": {"type": "string", "default": "Manila, Philippines", "description": "Exact check-in place."},
+                "audience": {"type": "string", "enum": ["Public"], "default": "Public", "description": "Currently supported audience."},
+                "publish": {"type": "boolean", "default": False, "description": "Explicitly authorize the verified Public check-in to be published."},
+                "run_id": {"type": "string", "description": "Stable caller-generated identifier for this publishing task; reuse it if the first response is lost."},
+                "resume_token": {"type": "string", "description": "Opaque checkpoint token returned by an earlier call."},
+                "timeout": {"type": "number", "default": 55, "minimum": 1, "maximum": 60, "description": "Maximum workflow duration in seconds."},
+            },
+            "required": ["account"],
         },
     },
     {
@@ -1242,18 +1287,20 @@ def tool_android_read(args: dict[str, Any]) -> str | list[dict[str, Any]]:
 
 def tool_android_facebook(args: dict[str, Any]) -> str:
     action = args.get("action")
-    if action not in ("accounts", "location", "audit"):
-        raise ValueError("action must be accounts, location, or audit")
+    if action not in ("accounts", "location", "restart", "audit"):
+        raise ValueError("action must be accounts, location, restart, or audit")
     if action == "audit":
         for name in ("timeout", "chunk_budget_seconds"):
-            if name in args and (isinstance(args[name], bool) or not isinstance(args[name], (int, float))):
+            if name in args and isinstance(args[name], bool):
                 raise ValueError(f"{name} must be a number")
     timeout = _bounded_number(args, "timeout", facebook_audit.DEFAULT_ACCOUNT_TIMEOUT if action == "audit" else ANDROID_LOCATION_TIMEOUT, 1, 60)
     account = args.get("account")
-    if action == "location" and (not isinstance(account, str) or not account.strip()):
-        raise ValueError("account is required for action=location; use action=accounts first")
+    if action in ("location", "restart") and (not isinstance(account, str) or not account.strip()):
+        raise ValueError(f"account is required for action={action}; use action=accounts first")
     if action == "audit":
         chunk_size = args.get("chunk_size", facebook_audit.DEFAULT_CHUNK_SIZE)
+        if isinstance(chunk_size, str) and re.fullmatch(r"[0-9]+", chunk_size.strip()):
+            chunk_size = int(chunk_size.strip())
         if isinstance(chunk_size, bool) or not isinstance(chunk_size, int):
             raise ValueError("chunk_size must be an integer")
         if not 1 <= chunk_size <= facebook_audit.MAX_CHUNK_SIZE:
@@ -1264,12 +1311,15 @@ def tool_android_facebook(args: dict[str, Any]) -> str:
         if resume_token is not None:
             facebook_audit.validate_resume_token_format(resume_token)
             facebook_audit.validate_resume_token(resume_token)
-        continue_after_blocker = args.get("continue_after_blocker", False)
-        if not isinstance(continue_after_blocker, bool):
-            raise ValueError("continue_after_blocker must be a boolean")
-        retry_current = args.get("retry_current", False)
-        if not isinstance(retry_current, bool):
-            raise ValueError("retry_current must be a boolean")
+        def audit_boolean(name: str) -> bool:
+            value = args.get(name, False)
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, str) and value.strip().casefold() in ("true", "false"):
+                return value.strip().casefold() == "true"
+            raise ValueError(f"{name} must be a boolean or the string 'true'/'false'")
+        continue_after_blocker = audit_boolean("continue_after_blocker")
+        retry_current = audit_boolean("retry_current")
         if continue_after_blocker and retry_current:
             raise ValueError("continue_after_blocker and retry_current are mutually exclusive")
         if retry_current and resume_token is None:
@@ -1286,6 +1336,53 @@ def tool_android_facebook(args: dict[str, Any]) -> str:
         return json.dumps(result, ensure_ascii=False)
     device = android_device(args)
     return json.dumps(facebook_android.run(device.serial, action=action, account=account, timeout=timeout), ensure_ascii=False)
+
+
+def tool_android_facebook_flow(args: dict[str, Any]) -> str:
+    """Validate all arguments before device discovery or checkpoint access."""
+    serial = args.get("serial")
+    if serial is not None and (not isinstance(serial, str) or not serial.strip()):
+        raise ValueError("serial must be a nonempty string")
+    account = args.get("account")
+    if not isinstance(account, str) or not account.strip():
+        raise ValueError("account is required and must be a nonempty string")
+    place = args.get("place", "Manila, Philippines")
+    if not isinstance(place, str) or not place.strip():
+        raise ValueError("place must be a nonempty string")
+    audience = args.get("audience", "Public")
+    if audience != "Public":
+        raise ValueError("audience must be 'Public'")
+    publish = args.get("publish", False)
+    if not isinstance(publish, bool):
+        raise ValueError("publish must be a boolean")
+    run_id = args.get("run_id")
+    if run_id is not None and (not isinstance(run_id, str) or not run_id.strip() or len(run_id) > 200):
+        raise ValueError("run_id must be a nonempty string of at most 200 characters")
+    resume_token = args.get("resume_token")
+    if publish and run_id is None and resume_token is None:
+        raise ValueError("publish=true requires run_id or resume_token")
+    timeout = args.get("timeout", 55)
+    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
+        raise ValueError("timeout must be a number from 1 to 60 seconds")
+    if not math.isfinite(timeout) or not 1 <= timeout <= 60:
+        raise ValueError("timeout must be a number from 1 to 60 seconds")
+    if resume_token is not None:
+        if not isinstance(resume_token, str):
+            raise ValueError("resume_token must be a string")
+        facebook_flow_state.validate_token_format(resume_token)
+        checkpoint = facebook_flow_state.load(resume_token)
+        if any(checkpoint[key] != value for key, value in
+               (("account", account), ("place", place), ("audience", audience))):
+            raise ValueError("resume_token is bound to a different account, place, or audience")
+        if serial is not None and checkpoint["serial"] != serial:
+            raise ValueError("resume_token is bound to a different device")
+
+    device = android_device(args)
+    result = facebook_flow.run(device.serial, account=account, place=place,
+                               audience=audience, resume_token=resume_token,
+                               timeout=float(timeout), publish=publish,
+                               run_id=run_id)
+    return json.dumps(result, ensure_ascii=False)
 
 
 def tool_android_location(args: dict[str, Any]) -> str:
@@ -1325,6 +1422,7 @@ HANDLERS = {
     "android_read": tool_android_read,
     "android_location": tool_android_location,
     "android_facebook": tool_android_facebook,
+    "android_facebook_flow": tool_android_facebook_flow,
 }
 
 

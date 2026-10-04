@@ -690,14 +690,58 @@ def test_android_replay_skips_the_final_dump(
 
 
 def test_deterministic_decision_handles_back_and_scroll() -> None:
-    from jev_use.choosers import deterministic_decision
-
     obs = observation()
-    back = deterministic_decision("go back", obs)
+    back = android.deterministic_decision("go back", obs)
     assert back is not None and back.kind == "go_back"
-    scroll = deterministic_decision("scroll down", obs)
+    scroll = android.deterministic_decision("scroll down", obs)
     assert scroll is not None and scroll.kind == "scroll_down"
-    assert deterministic_decision("open the settings app", obs) is None
+    assert android.deterministic_decision("open the settings app", obs) is None
+
+
+def test_exact_home_tab_tap_outranks_android_system_home_alias() -> None:
+    obs = observation('''<hierarchy>
+      <node class="android.widget.TextView" text="Home, tab 1 of 6"
+      content-desc="Home, tab 1 of 6" clickable="true" package="com.facebook.katana"
+      bounds="[0,1920][180,2060]" />
+      <node class="android.widget.TextView" text="Menu, tab 6 of 6"
+      content-desc="Menu, tab 6 of 6" clickable="true" package="com.facebook.katana"
+      bounds="[900,1920][1080,2060]" />
+    </hierarchy>''')
+    home_tab = next(target for target in obs.targets
+                    if target["label"] == "Home, tab 1 of 6")
+
+    exact_tap = android.deterministic_decision("tap " + home_tab["description"], obs)
+    assert exact_tap is not None
+    assert exact_tap.kind == "click_element"
+    assert exact_tap.element_id == home_tab["id"]
+    assert exact_tap.source == "deterministic"
+
+    system_home = android.deterministic_decision("go home", obs)
+    assert system_home is not None
+    assert system_home.kind == "go_home"
+
+
+def test_ambiguous_exact_android_target_fails_closed() -> None:
+    obs = observation('''<hierarchy>
+      <node class="android.widget.Button" text="Home" clickable="true"
+      bounds="[0,100][300,200]" />
+      <node class="android.widget.Button" text="Home" clickable="true"
+      bounds="[300,100][600,200]" />
+    </hierarchy>''')
+    decision = android.deterministic_decision("tap Home", obs)
+    assert decision is not None
+    assert decision.kind == "click_element"
+    assert decision.rejection == "the exact Android target is ambiguous"
+
+
+def test_explicit_tap_of_unobserved_control_never_falls_through_to_navigation() -> None:
+    obs = observation()
+    for goal in ("tap What's on your mind?", "tap Home, tab 1 of 6"):
+        decision = android.deterministic_decision(goal, obs)
+        assert decision is not None
+        assert decision.kind == "click_element"
+        assert decision.element_id is None
+        assert "no exact Android target" in (decision.rejection or "")
 
 
 def test_exact_description_selects_unlabelled_control_without_guessing() -> None:
@@ -1027,6 +1071,15 @@ def test_act_false_decides_without_touching_the_device(
 
 # -- facebook account location ---------------------------------------------
 
+def test_restart_facebook_force_stops_and_relaunches_without_clearing_data(monkeypatch):
+    commands = []
+    monkeypatch.setattr(android, "shell", lambda serial, command, **kwargs: commands.append((serial, command)) or (
+        "priority=0\ncom.facebook.katana/.MainActivity\n" if "resolve-activity" in command else ""))
+    android.restart_facebook("S")
+    assert commands == [("S", "cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.LAUNCHER com.facebook.katana"),
+                        ("S", "am force-stop com.facebook.katana"),
+                        ("S", "am start -W -n com.facebook.katana/.MainActivity")]
+
 
 LOCATION_PAGE = (
     "Your Primary Location\n"
@@ -1147,7 +1200,8 @@ def test_a_page_that_never_renders_gives_up_at_the_timeout(
 
 
 @pytest.mark.parametrize('text,state', [('Connection lost\nTap to retry\nWebpage not available', 'network_error'),
-                                       ('Unlock\nUse fingerprint to unlock\nCharging 7%', 'locked')])
+                                       ('Unlock\nUse fingerprint to unlock\nCharging 7%', 'locked'),
+                                       ('Session expired\nPlease log in again.\nOK', 'session_expired')])
 def test_location_blockers_return_immediately_instead_of_waiting_full_timeout(monkeypatch, text, state):
     monkeypatch.setattr(android, 'open_facebook_page', lambda serial, url, **kwargs: None)
     monkeypatch.setattr(android, 'screen_text', lambda serial: text)

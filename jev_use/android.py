@@ -38,7 +38,7 @@ from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import quote
 
-from .choosers import Decision, deterministic_decision, validate
+from .choosers import Decision, deterministic_decision as chooser_deterministic_decision, validate
 
 ADB = "adb"
 DUMP_PATH = "/data/local/tmp/jev_dump.xml"
@@ -132,6 +132,45 @@ def url_in(goal: str) -> str | None:
 #: action on Android — far more of the UI is reachable by backing out of a
 #: screen than by any element on it.
 KEYCODES = {"go_back": 4, "go_home": 3}
+
+_EXACT_TAP_GOAL = re.compile(r"^(?:please\s+)?(?:tap|click)\s+(.+)$", re.I)
+
+
+def deterministic_decision(goal: str, observation: Any) -> Decision | None:
+    """Resolve an explicit observed Android target before global key aliases.
+
+    Android can show a tab named ``Home`` while the system Home key is also a
+    valid action. An exact "tap <observed description>" names the UI target, so
+    match that closed-set description first. Other goals, including bare
+    "go home", retain the shared chooser's existing deterministic rules.
+    """
+    match = _EXACT_TAP_GOAL.fullmatch((goal or "").strip())
+    if match:
+        if "click_element" not in observation.operations():
+            return Decision(kind="click_element", confidence=1.0,
+                            source="deterministic",
+                            rejection="click_element is unavailable on this screen")
+        wanted = re.sub(r"\s+", " ", match.group(1).strip()).casefold()
+        if wanted:
+            targets = observation.targets_for("click_element")
+            exact = [target for target in targets
+                     if wanted in {
+                         re.sub(r"\s+", " ", str(target.get(key, "")).strip()).casefold()
+                         for key in ("label", "description")
+                     }]
+            if len(exact) == 1:
+                return Decision(kind="click_element", element_id=exact[0]["id"],
+                                confidence=1.0, source="deterministic")
+            if len(exact) != 1:
+                reason = ("the exact Android target is ambiguous" if exact
+                          else "no exact Android target matches the requested description")
+                return Decision(kind="click_element", confidence=1.0,
+                                source="deterministic",
+                                rejection=reason)
+        return Decision(kind="click_element", confidence=1.0,
+                        source="deterministic",
+                        rejection="the exact Android target description is empty")
+    return chooser_deterministic_decision(goal, observation)
 
 _BOUNDS = re.compile(r"\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]")
 
@@ -864,6 +903,30 @@ FACEBOOK_PRIMARY_LOCATION_URL = (
     "https://www.facebook.com/primary_location/info?ref=bookmarks"
 )
 
+
+def restart_facebook(serial: str, *, deadline: float | None = None) -> None:
+    """Force-stop and relaunch Facebook without clearing its saved app data."""
+    def budget(limit: float) -> float:
+        remaining = limit if deadline is None else min(limit, deadline - time.monotonic())
+        if remaining <= 0:
+            raise AdbError("Facebook restart deadline expired")
+        return remaining
+
+    resolved = shell(
+        serial,
+        "cmd package resolve-activity --brief -a android.intent.action.MAIN "
+        f"-c android.intent.category.LAUNCHER {FACEBOOK_APP}",
+        timeout=budget(10),
+    ).strip().splitlines()
+    component = next((line.strip() for line in reversed(resolved)
+                      if re.fullmatch(re.escape(FACEBOOK_APP) + r"/[A-Za-z0-9_.$]+", line.strip())), None)
+    if not component:
+        raise AdbError("Facebook launcher activity could not be resolved")
+    shell(serial, f"am force-stop {FACEBOOK_APP}", timeout=budget(10))
+    launched = shell(serial, f"am start -W -n {component}", timeout=budget(20))
+    if re.search(r"(?:Error:|Exception|unable to resolve)", launched, re.IGNORECASE):
+        raise AdbError("Facebook relaunch failed: " + launched.strip())
+
 #: The webview paints slower than a native screen and offers no ready signal for
 #: it, so the hierarchy is polled until the page names a location.
 LOCATION_LOAD_TIMEOUT = 30.0
@@ -958,6 +1021,8 @@ def is_signed_out(text: str) -> bool:
 def location_screen_state(text: str) -> str | None:
     """Recognize blockers from the screen, never from VPN or account geography."""
     lowered = text.casefold()
+    if "session expired" in lowered and "please log in again" in lowered:
+        return "session_expired"
     if "use fingerprint to unlock" in lowered or "swipe to unlock" in lowered or "emergency call" in lowered and "unlock" in lowered:
         return "locked"
     if "connection lost" in lowered or "webpage not available" in lowered or "network cannot access the internet" in lowered:
@@ -971,7 +1036,7 @@ def location_screen_state(text: str) -> str | None:
 class AccountLocation:
     """What one check of the signed-in account's location page found.
 
-    `state` is `"location"`, `"login"`, `"locked"`, `"network_error"` or `"unknown"` — the last meaning the page
+    `state` is `"location"`, `"login"`, `"session_expired"`, `"locked"`, `"network_error"` or `"unknown"` — the last meaning the page
     neither named a location nor showed a sign-in form, which on a live phone
     means it had not finished rendering.
     """
@@ -999,6 +1064,8 @@ class AccountLocation:
             lines.append("location=(none — unlock the phone and retry)")
         elif self.state == "network_error":
             lines.append("location=(none — restore the phone's internet connection and retry)")
+        elif self.state == "session_expired":
+            lines.append("location=(none — Facebook's session expired; sign in again on the phone and retry)")
         else:
             lines.append("location=(none found — the page had not rendered; see 'shows' below)")
         lines.append(f"seconds={self.seconds:.2f}")
