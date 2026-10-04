@@ -50,10 +50,15 @@ Preparation verifies an already-signed-in account using its identity and matchin
 self-profile link, or selects the saved card once and waits up to 60 seconds for
 password/remembered login to finish. It scrolls/plays the feed for 30 seconds
 (tries an observed Reels/Videos link once if the home feed has no playback),
-fills the Page form, verifies it is
-ready, and saves `submission_reserved` without creating the Page. If the user
+fills the Page form, waits through the configured post-fill settling delay,
+verifies it is ready, and saves `submission_reserved` without creating the Page. The
+bundled runner defaults to a 90-second browse and a 90-second post-fill delay;
+override `browse_seconds` and `post_fill_delay_ms` deliberately when needed. If the user
 changes the browsing requirement, adapt that step deliberately rather than
 claiming it occurred. No observed playback means pause for one focused inspection.
+
+If preparation returns `mfa_required`, record that account as skipped, leave its
+checkpoint intact, and continue with the next saved account or GoLogin profile.
 
 If `submission_reserved`, second call:
 
@@ -71,9 +76,17 @@ then waits for the exact delayed success notice, accepts the optional wizard's
 beforeunload, logs out through the account menu, and verifies the chooser returns.
 Continue to the next account only after `logged_out`.
 
+For a multi-profile batch, call `browser_profiles` once, iterate the returned
+GoLogin profiles one at a time, and close each profile with `browser_close` after
+its account list is exhausted. For each profile, continue through all saved
+accounts; when `prepare` returns `mfa_required`, record the account as skipped
+and move to the next account without retrying or clearing its checkpoint. Then
+open the next GoLogin profile and reuse the same workflow.
+
 ## Resume and unexpected UI
 
 - `logged_out`: account complete; do not create again.
+- `mfa_required`: two-step verification is required; skip this account and continue the batch.
 - `created`: run `facebookPages.finish` WITHOUT `submission` to finish logout.
 - `submitting`: run `facebookPages.finish` WITHOUT `submission` to confirm and
   log out. If the notice is gone, inspect the actual Page identity once and use

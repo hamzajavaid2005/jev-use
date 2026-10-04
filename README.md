@@ -128,7 +128,7 @@ actions instead of silently queueing duplicate submissions. Attachment errors mu
 
 Prepared scripts expose a checkpointed `workflow` helper for repeated account
 jobs. It supports `workflow.begin`, condition-based login detection,
-`workflow.browseFeed({seconds:30})`, `workflow.beforeCreate`, `workflow.submitCreation`, exact creation
+`workflow.browseFeed({seconds:90})`, `workflow.beforeCreate`, `workflow.submitCreation`, exact creation
 confirmation, and `workflow.loggedOut`. Checkpoints are written atomically so a
 timeout or logout failure stops a duplicate submission. The 30-second browsing
 period is used for repeated Facebook Page-creation jobs, and is never added to

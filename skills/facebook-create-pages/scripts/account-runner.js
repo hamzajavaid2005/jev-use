@@ -5,6 +5,10 @@ const facebookPages = {
     for (const key of ['run_id', 'account', 'page_name']) {
       if (typeof options[key] !== 'string' || !options[key].trim()) throw new Error(`${key} must be a non-empty string`);
     }
+    const browseSeconds = options.browse_seconds ?? 90;
+    const settleMs = options.post_fill_delay_ms ?? 90000;
+    if (!Number.isInteger(browseSeconds) || browseSeconds < 30 || browseSeconds > 180) throw new Error('browse_seconds must be an integer from 30 to 180');
+    if (!Number.isInteger(settleMs) || settleMs < 0 || settleMs > 180000) throw new Error('post_fill_delay_ms must be an integer from 0 to 180000');
     return options;
   },
   async measure(checkpoint, step, operation) {
@@ -92,11 +96,18 @@ const facebookPages = {
       throw new Error('Signed-in account does not match this checkpoint; inspect identity before continuing');
     }
   },
+  async mfaRequired(checkpoint) {
+    const url = page.url();
+    if (!/\/auth_platform\/codesubmit(?:\/|$)/i.test(url)) return false;
+    checkpoint.stage = 'mfa_required';
+    checkpoint.mfa = { url };
+    return true;
+  },
   async prepare(options) {
     const config = this.config(options);
     const checkpoint = workflow.begin(config.run_id, config.account);
     if (checkpoint.pageName && checkpoint.pageName !== config.page_name) throw new Error('Page name differs from the saved run; keep the original mapping');
-    if (['submitting', 'created', 'logged_out'].includes(checkpoint.stage)) return checkpoint;
+    if (['submitting', 'created', 'logged_out', 'mfa_required'].includes(checkpoint.stage)) return checkpoint;
     if (checkpoint.stage === 'submission_reserved') {
       await this.assertAccount(checkpoint);
       await workflow.validateCreation({ selector: config.create_selector });
@@ -109,10 +120,18 @@ const facebookPages = {
       if (!/^https:\/\/(?:[^/]+\.)?facebook\.com(?:\/|$)/.test(page.url())) {
         await workflow.navigate('https://www.facebook.com/');
       }
-      await this.measure(checkpoint, 'loginMs', () => this.login(config, checkpoint));
+      await this.measure(checkpoint, 'loginMs', async () => {
+        try { await this.login(config, checkpoint); }
+        catch (error) {
+          if (await this.mfaRequired(checkpoint)) return;
+          throw error;
+        }
+        await this.mfaRequired(checkpoint);
+      });
+      if (checkpoint.stage === 'mfa_required') return checkpoint;
     }
     await workflow.dismissPagePrompts?.();
-    await this.measure(checkpoint, 'browsingMs', () => workflow.browseFeed({ seconds: 30, discoverVideoSurface: true }));
+    await this.measure(checkpoint, 'browsingMs', () => workflow.browseFeed({ seconds: config.browse_seconds ?? 90, discoverVideoSurface: true }));
     if (!checkpoint.browsed) throw new Error('Feed browsing completed without observed video playback; inspect Videos/Reels once before continuing');
     if (!page.url().startsWith('https://www.facebook.com/pages/create')) await this.measure(checkpoint, 'formNavigationMs', () => workflow.navigate('https://www.facebook.com/pages/create/'));
     await this.measure(checkpoint, 'formFillMs', () => workflow.fillPage({
@@ -125,13 +144,16 @@ const facebookPages = {
       optionSelector: config.option_selector,
       bioSelector: config.bio_selector
     }));
+    // Keep the completed form visible for a deliberate settling period before
+    // reserving the one allowed creation attempt.
+    await this.measure(checkpoint, 'postFillDelayMs', () => page.waitForTimeout(config.post_fill_delay_ms ?? 90000));
     return workflow.beforeCreate(config.page_name);
   },
   async finish(options) {
     const config = this.config(options);
     const checkpoint = workflow.begin(config.run_id, config.account);
     if (checkpoint.pageName && checkpoint.pageName !== config.page_name) throw new Error('Page name differs from the saved run; keep the original mapping');
-    if (checkpoint.stage === 'logged_out') return checkpoint;
+    if (checkpoint.stage === 'logged_out' || checkpoint.stage === 'mfa_required') return checkpoint;
     if (checkpoint.stage === 'created' && !await this.activeAccountId()) {
       await page.getByText('Use another profile', { exact: true }).waitFor({ state: 'visible', timeout: 20000 });
       return workflow.loggedOut();

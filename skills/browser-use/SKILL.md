@@ -68,7 +68,7 @@ and recovery rules; do not recreate the script from scratch.
    - `workflow.loginSavedAccount({accountName,password})` selects the saved card,
      waits for either password OR signed-in state, and submits the password with
      Enter. Caller may override observed account/signed-in selectors if needed.
-   - `await workflow.browseFeed({seconds:30})` before opening the Create Page form.
+   - `await workflow.browseFeed({seconds:90})` before opening the Create Page form; the bundled runner also waits 90 seconds after filling the form by default.
      If no video plays, inspect Videos/Reels once; never invent playback.
    - `workflow.fillPage({pageName,bio})` fills name/category/bio, waits for the
      Reel creator suggestion, selects it, and verifies the Create Page control

@@ -32,7 +32,7 @@ function fixture({ withDialogs = false } = {}) {
     workflow: {
       begin: () => record,
       navigate: async url => events.push(['goto',url]),
-      browseFeed: async options => { assert.equal(options.seconds,30); record.browsed=true; events.push(['browse']); },
+      browseFeed: async options => { assert.equal(options.seconds,90); record.browsed=true; events.push(['browse']); },
       fillPage: async () => events.push(['fill']),
       beforeCreate: name => { record.pageName=name; record.stage='submission_reserved'; events.push(['reserve']); return record; },
       validateCreation: async () => events.push(['validate']),

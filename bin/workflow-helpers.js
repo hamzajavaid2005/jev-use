@@ -178,7 +178,7 @@ const workflow = {
     if (['submission_reserved', 'submitting', 'created', 'logged_out'].includes(checkpoint.stage)) {
       throw new Error(`Creation already ${checkpoint.stage} for this run/account. Inspect the saved checkpoint; do not submit again.`);
     }
-    if (!checkpoint.browsed) throw new Error('Complete workflow.browseFeed({seconds:30}) before creating the Page');
+    if (!checkpoint.browsed) throw new Error('Complete workflow.browseFeed with the configured duration before creating the Page');
     checkpoint.pageName = String(pageName);
     checkpoint.stage = 'submission_reserved';
     return checkpoint;
