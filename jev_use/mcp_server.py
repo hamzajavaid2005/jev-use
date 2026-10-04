@@ -319,7 +319,8 @@ Never substitute a different browser for a requested account. GoLogin needs
 vendor=\"gologin\" and browser_close afterward.
 When the task says all GoLogin profiles and supplies an ordered password list,
 do not ask profile-scope or account-distribution questions: enumerate every
-returned exact profile ID, map passwords to saved-account cards by position,
+returned exact profile ID, sort profiles numerically by their Profile number,
+explicitly open Profile 1 first (never API/newest-first), then map passwords to saved-account cards by position,
 skip accounts beyond the password list or at MFA, close the current profile,
 and continue to the next profile.
 If tools are missing, search once then use `jev-use call <tool>` in the shell.
@@ -843,6 +844,10 @@ def _gologin_lines(filter_text: str) -> list[str]:
         "",
         f"GOLOGIN ({len(found)} profiles; each runs in its own browser, not Chrome)",
     ]
+    if found:
+        lines.append(
+            "  BATCH ORDER: process numeric Profile 1 first, then Profile 2, Profile 3, and so on"
+        )
     if not found:
         lines.append("  (none match)")
     for profile in found:
