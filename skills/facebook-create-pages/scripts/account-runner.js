@@ -72,7 +72,8 @@ const facebookPages = {
         await acceptNextDialog();
         await card.click();
       }
-      await page.waitForTimeout(500); // Bounded polling for hydration/identity, not a reload loop.
+      // Fast bounded polling; identity verification still gates every action.
+      await page.waitForTimeout(Math.min(200, Math.max(0, deadline - Date.now())));
     }
     // Report observations, never infer expired sessions from an inert saved card.
     // Keep this non-secret: no page HTML, cookies, or password values in journals.
@@ -110,6 +111,7 @@ const facebookPages = {
       }
       await this.measure(checkpoint, 'loginMs', () => this.login(config, checkpoint));
     }
+    await workflow.dismissPagePrompts?.();
     await this.measure(checkpoint, 'browsingMs', () => workflow.browseFeed({ seconds: 30, discoverVideoSurface: true }));
     if (!checkpoint.browsed) throw new Error('Feed browsing completed without observed video playback; inspect Videos/Reels once before continuing');
     if (!page.url().startsWith('https://www.facebook.com/pages/create')) await this.measure(checkpoint, 'formNavigationMs', () => workflow.navigate('https://www.facebook.com/pages/create/'));

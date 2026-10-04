@@ -61,15 +61,48 @@ const workflow = {
   async fillPage({ pageName, bio, category = 'Reel creator', nameSelector, categorySelector, optionSelector, bioSelector, timeout = 10000 }) {
     const name = await this.visibleControl(nameSelector ? [page.locator(nameSelector)] : [page.getByRole('textbox', { name: /^Page name/i }), page.getByLabel(/^Page name/i)], timeout);
     const categories = await this.visibleControl(categorySelector ? [page.locator(categorySelector)] : [page.getByRole('combobox', { name: /^Category/i }), page.getByLabel(/^Category/i)], timeout);
-    const description = await this.visibleControl(bioSelector ? [page.locator(bioSelector)] : [page.getByRole('textbox', { name: /^Bio/i }), page.getByLabel(/^Bio/i)], timeout);
+    const description = await this.visibleControl(bioSelector ? [page.locator(bioSelector)] : [
+      page.getByRole('textbox', { name: /^Bio/i }),
+      page.getByLabel(/^Bio/i),
+      page.locator('textarea[name*="bio" i], textarea[placeholder*="bio" i]')
+    ], timeout);
     await name.fill(pageName);
     await categories.fill(category);
-    const option = optionSelector ? page.locator(optionSelector) : page.getByText(category, { exact: true }).last();
-    await option.waitFor({ state: 'visible', timeout });
-    await option.click();
+    // Facebook renders the suggestion in a listbox. Prefer the option itself;
+    // the visible text leaf can sit under a pointer-blocking overlay.
+    const option = optionSelector ? page.locator(optionSelector) : page.getByRole('option', { name: category, exact: true });
+    try {
+      if (!optionSelector && (typeof option.count !== 'function' || await option.count() === 0)) throw new Error('category option not present');
+      await option.waitFor({ state: 'visible', timeout: Math.min(timeout, 3000) });
+      await option.click({ timeout: Math.min(timeout, 3000) });
+    } catch {
+      const fallback = page.getByText(category, { exact: true }).last();
+      await fallback.waitFor({ state: 'visible', timeout });
+      try { await fallback.click({ timeout: Math.min(timeout, 3000) }); }
+      catch { await categories.press('ArrowDown'); await categories.press('Enter'); }
+    }
     await description.fill(bio);
+    await this.dismissPagePrompts();
     await this.creationControl().click({ trial: true, timeout });
     return { formReady: true };
+  },
+  async dismissPagePrompts() {
+    // Handle permission/notification banners rendered inside the page without
+    // touching arbitrary content. Browser chrome prompts are handled by the
+    // bridge's native-dialog watcher.
+    const prompts = page.locator('[role="dialog"], [aria-modal="true"]');
+    const count = await prompts.count().catch(() => 0);
+    for (let index = 0; index < count; index++) {
+      const prompt = prompts.nth(index);
+      if (typeof prompt.isVisible !== 'function' || !await prompt.isVisible().catch(() => false)) continue;
+      for (const label of [/^(Close|Dismiss|Not now|No thanks|Block)$/i]) {
+        const button = prompt.getByRole('button', { name: label }).first();
+        if (await button.isVisible().catch(() => false)) {
+          await button.click({ timeout: 1500 }).catch(() => {});
+          break;
+        }
+      }
+    }
   },
   async browseFeed({ seconds = 30, discoverVideoSurface = false } = {}) {
     if (!Number.isFinite(seconds) || seconds < 0 || seconds > 60) throw new Error('Feed duration must be 0–60 seconds');
@@ -82,7 +115,8 @@ const workflow = {
     let playingObserved = false;
     let videoSurfaceTried = false;
     while (Date.now() < deadline) {
-      // Observe visible feed videos only. Muted playback avoids unexpected audio.
+      // Observe visible feed videos only. Start muted for autoplay, then unmute
+      // and retry play so Facebook's player reports genuine playback reliably.
       const videos = page.locator('video:visible');
       const count = await videos.count();
       for (let index = 0; index < count; index++) {
@@ -100,7 +134,17 @@ const workflow = {
       // Let playback start before scrolling the video out of view.
       await page.waitForTimeout(Math.min(3000, Math.max(0, deadline - Date.now())));
       for (let index = 0; index < count; index++) {
-        try { playingObserved ||= await videos.nth(index).evaluate(video => !video.paused && video.readyState >= 2); }
+        try {
+          playingObserved ||= await videos.nth(index).evaluate(video => !video.paused && video.readyState >= 2);
+          if (!playingObserved) {
+            playingObserved ||= await videos.nth(index).evaluate(video => {
+              video.muted = false;
+              video.volume = 0;
+              if (video.paused) video.play().catch(() => {});
+              return !video.paused && video.readyState >= 2;
+            });
+          }
+        }
         catch { /* Feed rerendered; retry on the next sample. */ }
       }
       if (discoverVideoSurface && !playingObserved && !videoSurfaceTried && Date.now() - started >= 6000) {

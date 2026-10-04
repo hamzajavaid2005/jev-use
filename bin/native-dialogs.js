@@ -30,6 +30,13 @@ class NativeDialogs {
         .then(() => this.dismissed.push('FedCm.AccountChooser'))
         .catch(error => { this.warning = error.message; });
     }
+    // Page-owned alert/confirm dialogs block all DOM automation. Accept them
+    // only on the selected target and only while overlay dismissal is enabled.
+    if (message.method === 'Page.javascriptDialogOpening' && message.sessionId === this.sessionId && this.enabled) {
+      void this.send('Page.handleJavaScriptDialog', { accept: true }, this.sessionId)
+        .then(() => this.dismissed.push(`Page.${message.params.type || 'dialog'}`))
+        .catch(error => { this.warning = error.message; });
+    }
   }
   async start(enabled = true) {
     this.enabled = enabled;
@@ -37,6 +44,8 @@ class NativeDialogs {
     this.sessionId = attached.sessionId;
     try { await this.send('FedCm.enable', {}, this.sessionId); }
     catch (error) { this.warning = `Native account chooser monitoring unavailable: ${error.message}`; }
+    try { await this.send('Page.enable', {}, this.sessionId); }
+    catch (error) { this.warning ||= `Native page-dialog monitoring unavailable: ${error.message}`; }
   }
   async toggle(enabled) {
     this.enabled = enabled;
