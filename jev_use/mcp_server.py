@@ -838,6 +838,7 @@ def _gologin_lines(filter_text: str) -> list[str]:
 
     if filter_text:
         found = [p for p in found if filter_text in p.name.lower()]
+    found = sorted(found, key=gologin.profile_sort_key)
     lines = [
         "",
         f"GOLOGIN ({len(found)} profiles; each runs in its own browser, not Chrome)",

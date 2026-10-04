@@ -27,7 +27,8 @@ No live mutation is authorized merely by loading this skill.
 Use the complete profile list returned by `browser_profiles`; it handles API
 pagination. Do not search local GoLogin metadata or guess IDs to replace that
 list. When the user says “all GoLogin profiles”, select every exact profile ID
-returned by that call without asking a profile-scope question. When the user
+returned by that call without asking a profile-scope question, sorted numerically
+so `Profile 1` is always processed first. When the user
 supplies an ordered password list without an account mapping, assign password
 index `n` to saved-account card index `n` within each profile. Do not cycle or
 reuse a password after the list ends: mark extra accounts `missing_password`,
@@ -91,7 +92,8 @@ password/remembered login to finish. It scrolls/plays the feed for 30 seconds
 (tries an observed Reels/Videos link once if the home feed has no playback),
 fills the Page form, waits through the configured post-fill settling delay,
 verifies it is ready, and saves `submission_reserved` without creating the Page. The
-bundled runner defaults to a 90-second browse and a 90-second post-fill delay;
+bundled runner defaults to a 90-second browse, a 15-second post-fill delay, and
+a 30-second home-feed scroll after creation confirmation;
 override `browse_seconds` and `post_fill_delay_ms` deliberately when needed. If the user
 changes the browsing requirement, adapt that step deliberately rather than
 claiming it occurred. No observed playback means pause for one focused inspection.

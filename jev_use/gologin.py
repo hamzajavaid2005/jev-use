@@ -98,6 +98,12 @@ class GoLoginProfile:
         return f"{self.name!r} ({self.id})"
 
 
+def profile_sort_key(profile: GoLoginProfile) -> tuple[int, str, str]:
+    """Put numbered GoLogin profiles in stable Profile 1, Profile 2 order."""
+    match = re.search(r"(?:^|\s)profile\s*(\d+)(?:\s|$)", profile.name, re.IGNORECASE)
+    return (int(match.group(1)) if match else 10**9, profile.name.casefold(), profile.id)
+
+
 def _api_get(path: str) -> Any:
     request = urllib.request.Request(
         f"{API_URL}{path}",

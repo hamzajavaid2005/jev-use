@@ -6,9 +6,11 @@ const facebookPages = {
       if (typeof options[key] !== 'string' || !options[key].trim()) throw new Error(`${key} must be a non-empty string`);
     }
     const browseSeconds = options.browse_seconds ?? 90;
-    const settleMs = options.post_fill_delay_ms ?? 90000;
+    const settleMs = options.post_fill_delay_ms ?? 15000;
+    const successBrowseSeconds = options.post_success_browse_seconds ?? 30;
     if (!Number.isInteger(browseSeconds) || browseSeconds < 30 || browseSeconds > 180) throw new Error('browse_seconds must be an integer from 30 to 180');
     if (!Number.isInteger(settleMs) || settleMs < 0 || settleMs > 180000) throw new Error('post_fill_delay_ms must be an integer from 0 to 180000');
+    if (!Number.isInteger(successBrowseSeconds) || successBrowseSeconds < 0 || successBrowseSeconds > 60) throw new Error('post_success_browse_seconds must be an integer from 0 to 60');
     return options;
   },
   async measure(checkpoint, step, operation) {
@@ -103,6 +105,18 @@ const facebookPages = {
     checkpoint.mfa = { url };
     return true;
   },
+  async browseAfterCreation(checkpoint, seconds) {
+    if (!seconds || checkpoint.postCreateBrowsed) return;
+    const started = Date.now();
+    const deadline = started + seconds * 1000;
+    await workflow.navigate('https://www.facebook.com/');
+    while (Date.now() < deadline) {
+      if (page.mouse?.wheel) await page.mouse.wheel(0, 550).catch(() => {});
+      await page.waitForTimeout(Math.min(3000, Math.max(0, deadline - Date.now())));
+    }
+    checkpoint.postCreateBrowsed = true;
+    checkpoint.postCreateBrowsing = { elapsedMs: Date.now() - started, seconds };
+  },
   async prepare(options) {
     const config = this.config(options);
     const checkpoint = workflow.begin(config.run_id, config.account);
@@ -164,6 +178,7 @@ const facebookPages = {
       await this.measure(checkpoint, 'confirmationMs', () => workflow.confirmCreated(config.confirmation || {}));
     }
     if (checkpoint.stage !== 'created') throw new Error(`Cannot finish stage ${checkpoint.stage}; prepare or inspect without another creation click`);
+    await this.measure(checkpoint, 'postCreateBrowsingMs', () => this.browseAfterCreation(checkpoint, config.post_success_browse_seconds ?? 30));
     return this.measure(checkpoint, 'logoutMs', () => workflow.logout(config.logout || {}));
   }
 };

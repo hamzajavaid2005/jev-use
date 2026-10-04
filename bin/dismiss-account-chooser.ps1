@@ -20,6 +20,9 @@ try {
     $buttonCondition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)
     $closeNameCondition = New-Object System.Windows.Automation.OrCondition(,$closeConditions)
     $closeCondition = New-Object System.Windows.Automation.AndCondition($closeNameCondition, $buttonCondition)
+    $notificationTextCondition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty, 'Show notifications')
+    $blockNameCondition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty, 'Block')
+    $blockCondition = New-Object System.Windows.Automation.AndCondition($blockNameCondition, $buttonCondition)
     $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
     while ($true) {
         $candidates = @()
@@ -39,6 +42,23 @@ try {
                         $pattern = $null
                         if ($buttons[0].TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$pattern)) {
                             $candidates += $buttons[0]
+                            break
+                        }
+                    }
+                    $node = $walker.GetParent($node)
+                }
+            }
+            $notification = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $notificationTextCondition)
+            foreach ($prompt in $notification) {
+                $node = $prompt
+                for ($depth = 0; $depth -lt 8 -and $null -ne $node; $depth++) {
+                    if ($node.Equals($window)) { break }
+                    $buttons = $node.FindAll([System.Windows.Automation.TreeScope]::Descendants, $blockCondition)
+                    if ($buttons.Count -eq 1 -and -not $buttons[0].Current.IsOffscreen -and $buttons[0].Current.IsEnabled) {
+                        $pattern = $null
+                        if ($buttons[0].TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$pattern)) {
+                            $pattern.Invoke()
+                            [Console]::Out.WriteLine('{"dismissed":"Windows.NotificationPermission"}')
                             break
                         }
                     }
