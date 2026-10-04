@@ -80,6 +80,32 @@ def test_profiles_accepts_the_wrapped_shape(monkeypatch: pytest.MonkeyPatch) -> 
     assert [p.id for p in gologin.profiles()] == ["9"]
 
 
+def test_profiles_fetches_remaining_pages_and_deduplicates(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = []
+    def api(path):
+        calls.append(path)
+        if path == "/browser/v2":
+            return {"profiles": [{"id": str(i)} for i in range(30)]}
+        return {"profiles": [{"id": "29"}, {"id": "30", "name": "Last profile"}]}
+    monkeypatch.setattr(gologin, "_api_get", api)
+    found = gologin.profiles()
+    assert len(found) == 31
+    assert found[-1].name == "Last profile"
+    assert calls == ["/browser/v2", "/browser/v2?page=2"]
+
+
+def test_profiles_refuses_repeated_full_pages(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(gologin, "_api_get", lambda path: [{"id": str(i)} for i in range(30)])
+    with pytest.raises(gologin.GoLoginError, match="pagination repeated"):
+        gologin.profiles()
+
+
+def test_profiles_refuses_unexpected_response(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(gologin, "_api_get", lambda path: {"error": "Invalid request"})
+    with pytest.raises(gologin.GoLoginError, match="unexpected response shape"):
+        gologin.profiles()
+
+
 def test_find_matches_a_name_case_insensitively(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         gologin, "profiles", lambda: [gologin.GoLoginProfile("1", "Acme Ads")]

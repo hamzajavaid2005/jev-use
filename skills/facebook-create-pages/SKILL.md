@@ -24,6 +24,16 @@ No live mutation is authorized merely by loading this skill.
 4. Reuse the task-supplied password only for login; do not save credentials in
    the runner, run IDs, journals, screenshots, or files.
 
+Use the complete profile list returned by `browser_profiles`; it handles API
+pagination. Do not search local GoLogin metadata or guess IDs to replace that
+list. If the user requests all profiles, iterate that list; if the scope is
+unclear, ask for the profile names or IDs. Multiple candidate passwords are not
+an account mapping: ask which password belongs to each account before login;
+do not cycle through passwords. Keep credentials out of files and diagnostics.
+For an `Invalid request` tool failure, identify the tool and check its published
+schema, correct the arguments, and retry once. Preserve checkpoints and report
+the failed tool and error if it persists rather than claiming a transient cause.
+
 ## Two calls per account
 
 Use the same config and checkpoint scope in both calls. `account` is a stable
