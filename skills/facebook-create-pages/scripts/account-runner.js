@@ -5,8 +5,8 @@ const facebookPages = {
     for (const key of ['run_id', 'account', 'page_name']) {
       if (typeof options[key] !== 'string' || !options[key].trim()) throw new Error(`${key} must be a non-empty string`);
     }
-    const browseSeconds = options.browse_seconds ?? 90;
-    const settleMs = options.post_fill_delay_ms ?? 15000;
+    const browseSeconds = options.browse_seconds ?? 120;
+    const settleMs = options.post_fill_delay_ms ?? 0;
     const successBrowseSeconds = options.post_success_browse_seconds ?? 30;
     if (!Number.isInteger(browseSeconds) || browseSeconds < 30 || browseSeconds > 180) throw new Error('browse_seconds must be an integer from 30 to 180');
     if (!Number.isInteger(settleMs) || settleMs < 0 || settleMs > 180000) throw new Error('post_fill_delay_ms must be an integer from 0 to 180000');
@@ -145,7 +145,7 @@ const facebookPages = {
       if (checkpoint.stage === 'mfa_required') return checkpoint;
     }
     await workflow.dismissPagePrompts?.();
-    await this.measure(checkpoint, 'browsingMs', () => workflow.browseFeed({ seconds: config.browse_seconds ?? 90, discoverVideoSurface: true }));
+    await this.measure(checkpoint, 'browsingMs', () => workflow.browseFeed({ seconds: config.browse_seconds ?? 120, discoverVideoSurface: true }));
     if (!checkpoint.browsed) throw new Error('Feed browsing completed without observed video playback; inspect Videos/Reels once before continuing');
     if (!page.url().startsWith('https://www.facebook.com/pages/create')) await this.measure(checkpoint, 'formNavigationMs', () => workflow.navigate('https://www.facebook.com/pages/create/'));
     await this.measure(checkpoint, 'formFillMs', () => workflow.fillPage({
@@ -160,7 +160,7 @@ const facebookPages = {
     }));
     // Keep the completed form visible for a deliberate settling period before
     // reserving the one allowed creation attempt.
-    await this.measure(checkpoint, 'postFillDelayMs', () => page.waitForTimeout(config.post_fill_delay_ms ?? 90000));
+    await this.measure(checkpoint, 'postFillDelayMs', () => page.waitForTimeout(config.post_fill_delay_ms ?? 0));
     return workflow.beforeCreate(config.page_name);
   },
   async finish(options) {
