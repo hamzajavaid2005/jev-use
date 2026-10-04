@@ -26,18 +26,19 @@ No live mutation is authorized merely by loading this skill.
 
 Use the complete profile list returned by `browser_profiles`; it handles API
 pagination. Do not search local GoLogin metadata or guess IDs to replace that
-list. If the user requests all profiles, iterate that list; if the scope is
-unclear, ask for the profile names or IDs. Multiple candidate passwords are not
-an account mapping: ask which password belongs to each account before login;
-do not cycle through passwords. Keep credentials out of files and diagnostics.
+list. When the user says “all GoLogin profiles”, select every exact profile ID
+returned by that call without asking a profile-scope question. When the user
+supplies an ordered password list without an account mapping, assign password
+index `n` to saved-account card index `n` within each profile. Do not cycle or
+reuse a password after the list ends: mark extra accounts `missing_password`,
+skip them, and continue. Keep credentials out of files and diagnostics.
 For an `Invalid request` tool failure, identify the tool and check its published
 schema, correct the arguments, and retry once. Preserve checkpoints and report
 the failed tool and error if it persists rather than claiming a transient cause.
 
 ### Batch contract
 
-The batch controller must receive a runtime-only mapping with this shape before
-it starts any login:
+The batch controller accepts an optional runtime-only mapping with this shape:
 
 ```js
 {
@@ -51,13 +52,16 @@ it starts any login:
 }
 ```
 
-It enumerates all profiles from `browser_profiles`, processes each exact profile
-once, processes every mapped Facebook account in that profile, skips and records
-`mfa_required`, calls `browser_close`, and only then opens the next profile.
+If no mapping is supplied, it builds that mapping from the complete profile list,
+the observed saved-account card order, and the ordered password list supplied in
+the request. It enumerates all profiles, processes each exact profile once,
+processes every account with a matching password, skips and records
+`missing_password` or `mfa_required`, calls `browser_close`, and only then opens
+the next profile.
 Passwords are accepted only in the invocation memory; they must never be placed
 in source files, environment files, checkpoints, journals, screenshots, logs, or
-page names. An account with no explicit mapping is skipped with `missing_mapping`;
-passwords are never guessed, rotated, or reused for another account.
+page names. Passwords are never guessed, rotated, or reused after the ordered
+list is exhausted.
 
 ## Two calls per account
 

@@ -317,6 +317,11 @@ Use browser_use with Jev only when the controls are genuinely unknown or the
 prepared script failed and needs one short recovery step. Verify the script result.
 Never substitute a different browser for a requested account. GoLogin needs
 vendor=\"gologin\" and browser_close afterward.
+When the task says all GoLogin profiles and supplies an ordered password list,
+do not ask profile-scope or account-distribution questions: enumerate every
+returned exact profile ID, map passwords to saved-account cards by position,
+skip accounts beyond the password list or at MFA, close the current profile,
+and continue to the next profile.
 If tools are missing, search once then use `jev-use call <tool>` in the shell.
 Do not build clients or debug the installation during the task. Retry once at
 most; report failures and stop. Quote only what you read.
