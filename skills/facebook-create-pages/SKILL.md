@@ -34,6 +34,31 @@ For an `Invalid request` tool failure, identify the tool and check its published
 schema, correct the arguments, and retry once. Preserve checkpoints and report
 the failed tool and error if it persists rather than claiming a transient cause.
 
+### Batch contract
+
+The batch controller must receive a runtime-only mapping with this shape before
+it starts any login:
+
+```js
+{
+  profiles: [{ id: "<exact GoLogin profile id>" }],
+  accounts: [{
+    profile_id: "<exact GoLogin profile id>",
+    account: "<observed Facebook account name or id>",
+    page_name: "<stable page name>",
+    password: "<runtime value>"
+  }]
+}
+```
+
+It enumerates all profiles from `browser_profiles`, processes each exact profile
+once, processes every mapped Facebook account in that profile, skips and records
+`mfa_required`, calls `browser_close`, and only then opens the next profile.
+Passwords are accepted only in the invocation memory; they must never be placed
+in source files, environment files, checkpoints, journals, screenshots, logs, or
+page names. An account with no explicit mapping is skipped with `missing_mapping`;
+passwords are never guessed, rotated, or reused for another account.
+
 ## Two calls per account
 
 Use the same config and checkpoint scope in both calls. `account` is a stable
