@@ -90,8 +90,26 @@ def test_profiles_fetches_remaining_pages_and_deduplicates(monkeypatch: pytest.M
     monkeypatch.setattr(gologin, "_api_get", api)
     found = gologin.profiles()
     assert len(found) == 31
-    assert found[-1].name == "Last profile"
+    assert found[0].name == "0"
+    assert any(profile.name == "Last profile" for profile in found)
     assert calls == ["/browser/v2", "/browser/v2?page=2"]
+
+
+def test_profiles_are_sorted_by_numeric_profile_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        gologin,
+        "_api_get",
+        lambda path: {
+            "profiles": [
+                {"id": "22", "name": "Profile 22"},
+                {"id": "1", "name": "Profile 1"},
+                {"id": "10", "name": "Profile 10"},
+            ]
+        },
+    )
+    assert [profile.name for profile in gologin.profiles()] == [
+        "Profile 1", "Profile 10", "Profile 22"
+    ]
 
 
 def test_profiles_refuses_repeated_full_pages(monkeypatch: pytest.MonkeyPatch) -> None:

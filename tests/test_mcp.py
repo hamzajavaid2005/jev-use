@@ -138,6 +138,8 @@ def test_the_prompt_routes_to_browser_open_when_nothing_is_drivable() -> None:
     text = response["result"]["messages"][0]["content"]["text"]
     assert "browser_open" in text
     assert "Never substitute a different browser" in text
+    assert "explicitly open Profile 1 first" in text
+    assert "never API/newest-first" in text
 
 
 def test_unknown_prompt_is_an_error() -> None:

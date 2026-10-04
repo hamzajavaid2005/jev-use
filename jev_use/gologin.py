@@ -152,7 +152,7 @@ def profiles() -> list[GoLoginProfile]:
             added += 1
             found.append(GoLoginProfile(id=profile_id, name=str(entry.get("name") or profile_id)))
         if len(entries) < 30:
-            return found
+            return sorted(found, key=profile_sort_key)
         if not added:
             raise GoLoginError(f"GoLogin profile pagination repeated page {page_number}; cannot claim the list is complete")
     raise GoLoginError("GoLogin profile pagination exceeded 1000 pages; cannot claim the list is complete")
