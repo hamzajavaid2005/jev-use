@@ -1,0 +1,39 @@
+{
+  "source": "GoLogin browser_profiles on 2026-10-05",
+  "workspace": "current account after Ban Profiles workspace deletion",
+  "processing_order": "line_by_line_numeric: Profile 1 through the last listed profile",
+  "profiles": [
+    {"name":"Profile 1","id":"6a5eabf0547e277c7a9887c2"},
+    {"name":"Profile 2","id":"6a5f884419da2e4018ac17ff"},
+    {"name":"Profile 3","id":"6a5f8abc4505eb4fa548846c"},
+    {"name":"Profile 4","id":"6a69549b5f784e69d11f0dd5"},
+    {"name":"Profile 5","id":"6a8622d3a0ffb7d0db6b3712"},
+    {"name":"Profile 6","id":"6a8623c32ee7337502471a80"},
+    {"name":"Profile 7","id":"6a89e2350eaf11b3eab4365f"},
+    {"name":"Profile 8","id":"6a5e9d1a7da88c470860a391"},
+    {"name":"Profile 9","id":"6a8740076994b1d9b88494e2"},
+    {"name":"Profile 10","id":"6a6165004505eb4fa53f2f58"},
+    {"name":"Profile 11","id":"6a89e7d23a4aa61f897e5055"},
+    {"name":"Profile 12","id":"6a89e8994060a2e8d96e90a"},
+    {"name":"Profile 13","id":"6a89e9ef4060a2a38ec80c98"},
+    {"name":"Profile 14","id":"6a89eaab4060a2a38ec86b2d"},
+    {"name":"Profile 15","id":"6a89eb3b3a4aa61f8980623f"},
+    {"name":"Profile 16","id":"6a89ec4f7806a223de45631a"},
+    {"name":"Profile 17","id":"6a89ed90d541f7319bc0aa51"},
+    {"name":"Profile 18","id":"6a89ee9d1859fa46781baa3a"},
+    {"name":"Profile 19","id":"6a89ef951859fa46781c53c1"},
+    {"name":"Profile 20","id":"6a89f0a393aa3de8d950c3cc"},
+    {"name":"Profile 21","id":"6a8a21d293aa3de8d96e4b08"},
+    {"name":"Profile 22","id":"6a8a232df15fb1d641410282"},
+    {"name":"Profile 23","id":"6a8a1b013a4aa61f899c4bb4"},
+    {"name":"Profile 24","id":"6a8a1c2d8c930e4076e87f43"},
+    {"name":"Profile 25","id":"6a8a1d497806a223de6368d8"},
+    {"name":"Profile 26","id":"6a8a1e3ef15fb1d6413fa9b1"},
+    {"name":"Profile 27","id":"6a8a1ee776d64aa6b17b3389"},
+    {"name":"Profile 28","id":"6a8a1fa793aa3de8d96cea2e"},
+    {"name":"Profile 29","id":"6a8a202af276ad8d3bf4c597"}
+  ]
+}
+
+
+

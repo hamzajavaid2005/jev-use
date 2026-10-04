@@ -26,9 +26,7 @@ No live mutation is authorized merely by loading this skill.
 
 Use the complete profile list returned by `browser_profiles`; it handles API
 pagination. Do not search local GoLogin metadata or guess IDs to replace that
-list. When the user says "all GoLogin profiles", select every exact profile ID
-returned by that call without asking a profile-scope question, sort by the
-numeric Profile number, and explicitly open `Profile 1` first. Never start with
+list. When the user says "all GoLogin profiles", select every exact profile ID\nreturned by that call without asking a profile-scope question, sort by the\nnumeric Profile number, and process them line by line: open `Profile 1`, finish\nor skip it, close it, then open `Profile 2`, continuing numerically through the\nlast listed profile. Never start with
 the API's newest/first returned item (for example `Profile 22`) or any other
 profile merely because it appeared first in the response. When the user
 supplies an ordered password list without an account mapping, assign password
@@ -175,3 +173,11 @@ Call `browser_close` to save the GoLogin profile. Report each account's Page nam
 confirmed stage, captured Page URL/ID when available, and unfinished work. Include
 elapsed time and the returned `timings` (login, browsing, navigation, fill,
 confirmation, logout); do not call pending creation or pending logout complete.
+
+### Current GoLogin registry
+
+The checked-in snapshot at `config/gologin-profiles.json` records the current
+29-profile name/ID mapping after the Ban Profiles workspace was deleted. Use the
+exact ID from the live `browser_profiles` response when opening a profile; use the
+registry as a readable reference and detect/report any live changes instead of
+falling back to a name when duplicate names exist.

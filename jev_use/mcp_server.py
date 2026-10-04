@@ -846,7 +846,7 @@ def _gologin_lines(filter_text: str) -> list[str]:
     ]
     if found:
         lines.append(
-            "  BATCH ORDER: process numeric Profile 1 first, then Profile 2, Profile 3, and so on"
+            "  BATCH ORDER: line by line from Profile 1 to the last profile; close each before opening the next"
         )
     if not found:
         lines.append("  (none match)")
