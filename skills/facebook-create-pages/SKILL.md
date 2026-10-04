@@ -92,12 +92,12 @@ Sign in as credential chooser is distinct from the Facebook password form.
 
 Preparation verifies an already-signed-in account using its identity and matching
 self-profile link, or selects the saved card once and waits up to 60 seconds for
-password/remembered login to finish. It scrolls/plays the feed for 30 seconds
+password/remembered login to finish. It scrolls/plays the feed for at least 180 seconds
 (tries an observed Reels/Videos link once if the home feed has no playback),
 fills the Page form, waits through the configured post-fill settling delay,
 verifies it is ready, and saves `submission_reserved` without creating the Page. The
-bundled runner defaults to a 120-second browse with no post-fill delay and a
-30-second post-creation home-feed scroll;
+bundled runner defaults to a 180-second browse, a 60-second post-fill creation dwell, and a
+60-second post-creation home-feed scroll;
 override `browse_seconds` and `post_fill_delay_ms` deliberately when needed. If the user
 changes the browsing requirement, adapt that step deliberately rather than
 claiming it occurred. No observed playback means pause for one focused inspection.

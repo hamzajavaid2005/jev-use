@@ -32,7 +32,7 @@ function fixture({ withDialogs = false } = {}) {
     workflow: {
       begin: () => record,
       navigate: async url => events.push(['goto',url]),
-      browseFeed: async options => { assert.equal(options.seconds,120); record.browsed=true; events.push(['browse']); },
+      browseFeed: async options => { assert.equal(options.seconds,180); now += options.seconds * 1000; record.browsed=true; events.push(['browse']); },
       fillPage: async () => events.push(['fill']),
       beforeCreate: name => { record.pageName=name; record.stage='submission_reserved'; events.push(['reserve']); return record; },
       validateCreation: async () => events.push(['validate']),
@@ -55,6 +55,17 @@ test('prepares then confirms and logs out without retaining the password', async
   f.record.stage='submitting'; // Bridge journals and performs the one creation click.
   assert.equal((await f.runner.finish(config)).stage,'logged_out');
   assert.deepEqual(f.events.slice(-3).map(event=>event[0]),['confirm','goto','logout']);
+  assert.equal(f.record.timings.browsingMs, 180000);
+  assert.equal(f.record.timings.postFillDelayMs, 60000);
+  assert.equal(f.record.postCreateBrowsing.elapsedMs, 60000);
+  assert.equal(f.record.postCreateBrowsing.seconds, 60);
+});
+
+test('rejects timing overrides shorter than the required dwell periods', () => {
+  const f = fixture();
+  assert.throws(() => f.runner.config({...config, browse_seconds: 179}), /browse_seconds/);
+  assert.throws(() => f.runner.config({...config, post_fill_delay_ms: 59999}), /post_fill_delay_ms/);
+  assert.throws(() => f.runner.config({...config, post_success_browse_seconds: 59}), /post_success_browse_seconds/);
 });
 
 test('an existing reservation validates without logging in, browsing or creating again', async () => {
