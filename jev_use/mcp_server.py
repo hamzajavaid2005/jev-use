@@ -321,8 +321,9 @@ When the task says all GoLogin profiles and supplies an ordered password list,
 do not ask profile-scope or account-distribution questions: enumerate every
 returned exact profile ID, sort profiles numerically by their Profile number,
 explicitly open Profile 1 first (never API/newest-first), then map passwords to saved-account cards by position,
-skip accounts beyond the password list or at MFA, close the current profile,
-and continue to the next profile.
+skip accounts beyond the password list or at MFA. Exhaust every saved Facebook
+account in the current profile and verify the chooser has no unprocessed cards
+before closing it; only then continue to the next profile.
 If tools are missing, search once then use `jev-use call <tool>` in the shell.
 Do not build clients or debug the installation during the task. Retry once at
 most; report failures and stop. Quote only what you read.

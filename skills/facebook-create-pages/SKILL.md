@@ -26,7 +26,11 @@ No live mutation is authorized merely by loading this skill.
 
 Use the complete profile list returned by `browser_profiles`; it handles API
 pagination. Do not search local GoLogin metadata or guess IDs to replace that
-list. When the user says "all GoLogin profiles", select every exact profile ID\nreturned by that call without asking a profile-scope question, sort by the\nnumeric Profile number, and process them line by line: open `Profile 1`, finish\nor skip it, close it, then open `Profile 2`, continuing numerically through the\nlast listed profile. Never start with
+list. When the user says "all GoLogin profiles", select every exact profile ID
+returned by that call without asking a profile-scope question, sort by the
+numeric Profile number, and process them line by line: open `Profile 1`, finish
+or skip it, close it, then open `Profile 2`, continuing numerically through the
+last listed profile. Never start with
 the API's newest/first returned item (for example `Profile 22`) or any other
 profile merely because it appeared first in the response. When the user
 supplies an ordered password list without an account mapping, assign password
@@ -118,11 +122,16 @@ beforeunload, logs out through the account menu, and verifies the chooser return
 Continue to the next account only after `logged_out`.
 
 For a multi-profile batch, call `browser_profiles` once, iterate the returned
-GoLogin profiles one at a time, and close each profile with `browser_close` after
-its account list is exhausted. For each profile, continue through all saved
-accounts; when `prepare` returns `mfa_required`, record the account as skipped
-and move to the next account without retrying or clearing its checkpoint. Then
-open the next GoLogin profile and reuse the same workflow.
+GoLogin profiles one at a time, and close each profile with `browser_close` only
+after its account list is exhausted. At the start of every profile, enumerate all
+visible saved-account cards and create a work item for each one. After each
+account reaches `logged_out` or `mfa_required`, inspect the chooser again and
+continue until there are no unprocessed account cards left. Never advance to the
+next GoLogin profile after creating only the first Page, and never call
+`browser_close` while another saved account remains. Then open the next profile
+and reuse the same workflow. A profile is complete only when every observed
+account is terminal (`logged_out` or `mfa_required`) or the chooser is verified
+empty.
 
 ## Resume and unexpected UI
 
